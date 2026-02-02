@@ -2,9 +2,9 @@
 import { getSprints, getSprintById, getNextNonBlockedIndex } from './sprints.js';
 
 export const INVOLVEMENT_LABELS = ['Individual', 'Half Team', 'Full Team'];
-export const DURATION_UNITS = ['weeks', 'months', 'quarters', 'years'];
-export const DURATION_UNIT_LABELS = ['Weeks', 'Months', 'Quarters', 'Years'];
-export const DURATION_RANGE_MAX = { weeks: 6, months: 6, quarters: 6, years: 3 };
+export const DURATION_UNITS = ['weeks', 'months', 'quarters', 'years', 'sprints'];
+export const DURATION_UNIT_LABELS = ['Weeks', 'Months', 'Quarters', 'Years', 'Sprints'];
+export const DURATION_RANGE_MAX = { weeks: 6, months: 6, quarters: 6, years: 3, sprints: 50 };
 export const DEPENDENCY_LABELS = [
   'Teams can work and deliver value independently',
   'Light collaboration with infrequent synchronization',

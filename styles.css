@@ -56,6 +56,39 @@ body {
   flex-wrap: wrap;
 }
 
+.confidence-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.confidence-mode-btn {
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.confidence-mode-btn + .confidence-mode-btn {
+  border-left: 1px solid var(--border);
+}
+
+.confidence-mode-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.confidence-mode-btn.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+
 .btn-new {
   font-family: inherit;
   font-size: 0.875rem;
@@ -617,6 +650,15 @@ body {
   position: relative;
   height: 24px;
   margin: 0;
+}
+
+.sprint-single-range .range-single {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 .timeline-row-track .dual-range-wrap {

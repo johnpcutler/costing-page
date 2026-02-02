@@ -27,7 +27,9 @@ import {
   toggleEpicMetric,
   syncValueDeliveryToProjectEnd,
   bootstrapEpicIfEmpty,
+  EBITDA_MAX,
 } from './epics.js';
+import { getDisplayValueForInYearEbitda } from './confidenceMode.js';
 
 describe('getEpicById', () => {
   it('returns epic when found by id', () => {
@@ -623,5 +625,198 @@ describe('snapshot capture and restore', () => {
     const epic = addEpic('Epic');
     const ok = restoreEpicFromSnapshot(epic.id, 99);
     assert.strictEqual(ok, false);
+  });
+});
+
+describe('confidence mode transitions', () => {
+  beforeEach(() => {
+    setSprints([
+      { id: 's01', label: 'S1', isBlocked: false },
+      { id: 's02', label: 'S2', isBlocked: false },
+      { id: 's03', label: 'S3', isBlocked: false },
+      { id: 's04', label: 'S4', isBlocked: false },
+      { id: 's05', label: 'S5', isBlocked: false },
+      { id: 's06', label: 'S6', isBlocked: false },
+      { id: 's07', label: 'S7', isBlocked: false },
+      { id: 's08', label: 'S8', isBlocked: false },
+      { id: 's09', label: 'S9', isBlocked: false },
+      { id: 's10', label: 'S10', isBlocked: false },
+      { id: 's25', label: 'S25', isBlocked: false },
+    ]);
+  });
+
+  it('setter with (v,v) produces min===max for EBITDA', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, 25, 25);
+    setInYearEbitdaRange(epic.id, 10, 10);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 25);
+    assert.strictEqual(found.annualizedEbitda.max, 25);
+    assert.strictEqual(found.inYearEbitda.min, 10);
+    assert.strictEqual(found.inYearEbitda.max, 10);
+  });
+
+  it('setter with (v,v) produces startSprintId===endSprintId for timeline', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setExpectedDeliveryStart(epic.id, 's05', 's05');
+    setValueDeliveryDate(epic.id, 's10', 's10');
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.expectedDeliveryStart.startSprintId, 's05');
+    assert.strictEqual(found.expectedDeliveryStart.endSprintId, 's05');
+    assert.strictEqual(found.valueDeliveryDate.startSprintId, 's10');
+    assert.strictEqual(found.valueDeliveryDate.endSprintId, 's10');
+  });
+
+  it('setter with (v,v) produces durationMin===durationMax for sprints unit', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    addTeamToEpic(epic.id, 'eng');
+    setTeamDurationRange(epic.id, 'eng', 'sprints', 4, 4);
+    const found = getEpicById(epic.id);
+    const a = found.teamAssignments.find((x) => x.teamId === 'eng');
+    assert.strictEqual(a.durationMin, 4);
+    assert.strictEqual(a.durationMax, 4);
+  });
+
+  it('round-trip: ranges to high confidence - EBITDA uses min', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, 10, 90);
+    setAnnualizedEbitdaRange(epic.id, 10, 10);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 10);
+    assert.strictEqual(found.annualizedEbitda.max, 10);
+  });
+
+  it('round-trip: ranges to high confidence - timeline uses start', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setExpectedDeliveryStart(epic.id, 's02', 's08');
+    setExpectedDeliveryStart(epic.id, 's02', 's02');
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.expectedDeliveryStart.startSprintId, 's02');
+    assert.strictEqual(found.expectedDeliveryStart.endSprintId, 's02');
+  });
+
+  it('round-trip: ranges to high confidence - duration uses min', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    addTeamToEpic(epic.id, 'eng');
+    setTeamDurationRange(epic.id, 'eng', 'months', 2, 6);
+    setTeamDurationRange(epic.id, 'eng', 'months', 2, 2);
+    const found = getEpicById(epic.id);
+    const a = found.teamAssignments.find((x) => x.teamId === 'eng');
+    assert.strictEqual(a.durationMin, 2);
+    assert.strictEqual(a.durationMax, 2);
+  });
+
+  it('round-trip: high confidence to ranges - data unchanged when min===max', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    addTeamToEpic(epic.id, 'eng');
+    setAnnualizedEbitdaRange(epic.id, 50, 50);
+    setExpectedDeliveryStart(epic.id, 's05', 's05');
+    setValueDeliveryDate(epic.id, 's06', 's06');
+    setTeamDurationRange(epic.id, 'eng', 'quarters', 3, 3);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 50);
+    assert.strictEqual(found.annualizedEbitda.max, 50);
+    assert.strictEqual(found.expectedDeliveryStart.startSprintId, 's05');
+    assert.strictEqual(found.expectedDeliveryStart.endSprintId, 's05');
+    assert.strictEqual(found.teamAssignments[0].durationMin, 3);
+    assert.strictEqual(found.teamAssignments[0].durationMax, 3);
+  });
+
+  it('edge case: zero EBITDA survives toggle', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, 0, 0);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 0);
+    assert.strictEqual(found.annualizedEbitda.max, 0);
+  });
+
+  it('edge case: max EBITDA survives toggle', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, EBITDA_MAX, EBITDA_MAX);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, EBITDA_MAX);
+    assert.strictEqual(found.annualizedEbitda.max, EBITDA_MAX);
+  });
+
+  it('edge case: In Year display value capped by ann per helper', () => {
+    const inYear = { min: 50, max: 70 };
+    const ann = { min: 20, max: 80 };
+    assert.strictEqual(getDisplayValueForInYearEbitda(inYear, ann), 20);
+  });
+
+  it('edge case: inYear max clamped to ann max by setter', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, 30, 30);
+    setInYearEbitdaRange(epic.id, 50, 50);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.inYearEbitda.max, 30);
+  });
+
+  it('edge case: sprints unit stores single value', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    addTeamToEpic(epic.id, 'eng');
+    setTeamDurationRange(epic.id, 'eng', 'sprints', 5, 5);
+    const found = getEpicById(epic.id);
+    const a = found.teamAssignments.find((x) => x.teamId === 'eng');
+    assert.strictEqual(a.durationUnit, 'sprints');
+    assert.strictEqual(a.durationMin, 5);
+    assert.strictEqual(a.durationMax, 5);
+  });
+
+  it('edge case: single sprint timeline boundaries', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setExpectedDeliveryStart(epic.id, 's01', 's01');
+    setValueDeliveryDate(epic.id, 's25', 's25');
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.expectedDeliveryStart.startSprintId, 's01');
+    assert.strictEqual(found.expectedDeliveryStart.endSprintId, 's01');
+    assert.strictEqual(found.valueDeliveryDate.startSprintId, 's25');
+    assert.strictEqual(found.valueDeliveryDate.endSprintId, 's25');
+  });
+
+  it('snapshot preserves high-confidence data (min===max)', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    addTeamToEpic(epic.id, 'eng');
+    setAnnualizedEbitdaRange(epic.id, 40, 40);
+    setInYearEbitdaRange(epic.id, 20, 20);
+    setExpectedDeliveryStart(epic.id, 's03', 's03');
+    setValueDeliveryDate(epic.id, 's05', 's05');
+    setTeamDurationRange(epic.id, 'eng', 'months', 4, 4);
+    captureEpicSnapshot(epic.id, '');
+    setAnnualizedEbitdaRange(epic.id, 0, 100);
+    setExpectedDeliveryStart(epic.id, 's01', 's08');
+    setTeamDurationRange(epic.id, 'eng', 'weeks', 1, 6);
+    restoreEpicFromSnapshot(epic.id, 0);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 40);
+    assert.strictEqual(found.annualizedEbitda.max, 40);
+    assert.strictEqual(found.inYearEbitda.min, 20);
+    assert.strictEqual(found.inYearEbitda.max, 20);
+    assert.strictEqual(found.expectedDeliveryStart.startSprintId, 's03');
+    assert.strictEqual(found.expectedDeliveryStart.endSprintId, 's03');
+    assert.strictEqual(found.teamAssignments[0].durationMin, 4);
+    assert.strictEqual(found.teamAssignments[0].durationMax, 4);
+  });
+
+  it('toggle without edit: data unchanged', () => {
+    epics.length = 0;
+    const epic = addEpic('Epic');
+    setAnnualizedEbitdaRange(epic.id, 10, 90);
+    const found = getEpicById(epic.id);
+    assert.strictEqual(found.annualizedEbitda.min, 10);
+    assert.strictEqual(found.annualizedEbitda.max, 90);
   });
 });

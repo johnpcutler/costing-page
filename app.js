@@ -35,6 +35,7 @@ import {
 } from './epics.js';
 import { loadTeams, getTeamById, getTeams } from './teams.js';
 import { loadSprints, getSprints, getSprintById, getNextNonBlockedIndex } from './sprints.js';
+import { getDisplayValueForAnnualizedEbitda, getDisplayValueForInYearEbitda } from './confidenceMode.js';
 
 const epicListEl = document.getElementById('epicList');
 const btnNew = document.getElementById('btnNew');
@@ -47,6 +48,16 @@ const backLink = document.getElementById('backLink');
 let sprintViewRange = '2y';
 let selectedSnapshotIndex = null;
 let initiativeObjectiveEditingId = null;
+
+const CONFIDENCE_MODE_KEY = 'ce-two-confidence-mode';
+let confidenceMode = (() => {
+  try {
+    const s = localStorage.getItem(CONFIDENCE_MODE_KEY);
+    return s === 'high' ? 'high' : 'ranges';
+  } catch {
+    return 'ranges';
+  }
+})();
 
 function getVisibleSprints() {
   const all = getSprints();
@@ -130,13 +141,13 @@ function renderOptionPicker(label, options, selectedIndex, onSelect, readOnly = 
 }
 
 function formatDurationRangeLabel(unit, min, max) {
-  const u = unit === 'weeks' ? 'wk' : unit === 'months' ? 'mo' : unit === 'quarters' ? 'q' : 'yr';
-  const suffix = unit === 'weeks' ? 's' : unit === 'months' ? 's' : unit === 'quarters' ? 's' : 's';
+  const u = unit === 'weeks' ? 'wk' : unit === 'months' ? 'mo' : unit === 'quarters' ? 'q' : unit === 'sprints' ? 'sprint' : 'yr';
+  const suffix = unit === 'sprints' ? 's' : (unit === 'weeks' || unit === 'months' || unit === 'quarters' || unit === 'years') ? 's' : 's';
   if (min === max) return `${min} ${u}${min !== 1 ? suffix : ''}`;
   return `${min}–${max} ${u}${suffix}`;
 }
 
-function renderDurationPicker(epicId, assignment, onCommit, readOnly = false) {
+function renderDurationPicker(epicId, assignment, onCommit, readOnly = false, isHighConfidence = false) {
   let unit = assignment.durationUnit ?? 'months';
   let min = Math.max(1, assignment.durationMin ?? 1);
   let max = Math.max(1, assignment.durationMax ?? 1);
@@ -152,22 +163,40 @@ function renderDurationPicker(epicId, assignment, onCommit, readOnly = false) {
     const rMax = DURATION_RANGE_MAX[unit] ?? 6;
     const fromOptions = Array.from({ length: rMax }, (_, i) => i + 1);
     const toOptions = Array.from({ length: rMax - min + 1 }, (_, i) => min + i);
-    wrap.innerHTML = `
-      <span class="option-picker-label">Extent</span>
-      <div class="duration-unit-row">
-        ${DURATION_UNIT_LABELS.map((lbl, i) => `<button type="button" class="option-btn ${DURATION_UNITS[i] === unit ? 'selected' : ''}" data-unit="${DURATION_UNITS[i]}" ${readOnly ? 'disabled' : ''}>${escapeHtml(lbl)}</button>`).join('')}
-      </div>
-      <div class="duration-range-row">
-        <select class="duration-range-select" data-edge="min" ${readOnly ? 'disabled' : ''}>
-          ${fromOptions.map((n) => `<option value="${n}" ${n === min ? 'selected' : ''}>${n}</option>`).join('')}
-        </select>
-        <span class="duration-range-sep">to</span>
-        <select class="duration-range-select" data-edge="max" ${readOnly ? 'disabled' : ''}>
-          ${toOptions.map((n) => `<option value="${n}" ${n === max ? 'selected' : ''}>${n}</option>`).join('')}
-        </select>
-        <span class="duration-range-unit">${unit}</span>
-      </div>
-    `;
+    const singleVal = min;
+    const singleOptions = Array.from({ length: rMax }, (_, i) => i + 1);
+
+    if (isHighConfidence) {
+      wrap.innerHTML = `
+        <span class="option-picker-label">Extent</span>
+        <div class="duration-unit-row">
+          ${DURATION_UNIT_LABELS.map((lbl, i) => `<button type="button" class="option-btn ${DURATION_UNITS[i] === unit ? 'selected' : ''}" data-unit="${DURATION_UNITS[i]}" ${readOnly ? 'disabled' : ''}>${escapeHtml(lbl)}</button>`).join('')}
+        </div>
+        <div class="duration-range-row">
+          <select class="duration-range-select duration-single" data-edge="value" ${readOnly ? 'disabled' : ''}>
+            ${singleOptions.map((n) => `<option value="${n}" ${n === singleVal ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+          <span class="duration-range-unit">${unit}</span>
+        </div>
+      `;
+    } else {
+      wrap.innerHTML = `
+        <span class="option-picker-label">Extent</span>
+        <div class="duration-unit-row">
+          ${DURATION_UNIT_LABELS.map((lbl, i) => `<button type="button" class="option-btn ${DURATION_UNITS[i] === unit ? 'selected' : ''}" data-unit="${DURATION_UNITS[i]}" ${readOnly ? 'disabled' : ''}>${escapeHtml(lbl)}</button>`).join('')}
+        </div>
+        <div class="duration-range-row">
+          <select class="duration-range-select" data-edge="min" ${readOnly ? 'disabled' : ''}>
+            ${fromOptions.map((n) => `<option value="${n}" ${n === min ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+          <span class="duration-range-sep">to</span>
+          <select class="duration-range-select" data-edge="max" ${readOnly ? 'disabled' : ''}>
+            ${toOptions.map((n) => `<option value="${n}" ${n === max ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+          <span class="duration-range-unit">${unit}</span>
+        </div>
+      `;
+    }
 
     if (!readOnly) {
       wrap.querySelectorAll('[data-unit]').forEach((btn) => {
@@ -180,19 +209,29 @@ function renderDurationPicker(epicId, assignment, onCommit, readOnly = false) {
           onCommit();
         });
       });
-      wrap.querySelectorAll('.duration-range-select').forEach((sel) => {
-        sel.addEventListener('change', () => {
-          if (sel.dataset.edge === 'min') {
-            min = Number(sel.value);
-            if (max < min) max = min;
-          } else {
-            max = Number(sel.value);
-            if (min > max) min = max;
-          }
-          setTeamDurationRange(epicId, assignment.teamId, unit, min, max);
+      if (isHighConfidence) {
+        wrap.querySelector('.duration-single')?.addEventListener('change', (e) => {
+          const v = Number(e.target.value);
+          min = v;
+          max = v;
+          setTeamDurationRange(epicId, assignment.teamId, unit, v, v);
           onCommit();
         });
-      });
+      } else {
+        wrap.querySelectorAll('.duration-range-select').forEach((sel) => {
+          sel.addEventListener('change', () => {
+            if (sel.dataset.edge === 'min') {
+              min = Number(sel.value);
+              if (max < min) max = min;
+            } else {
+              max = Number(sel.value);
+              if (min > max) min = max;
+            }
+            setTeamDurationRange(epicId, assignment.teamId, unit, min, max);
+            onCommit();
+          });
+        });
+      }
     }
   }
 
@@ -369,7 +408,7 @@ function openAddTodoModal(epicId, teamId, teamName, onAdd) {
   textarea.focus();
 }
 
-function renderTeamCard(epicId, assignment, team, readOnly = false) {
+function renderTeamCard(epicId, assignment, team, readOnly = false, isHighConfidence = false) {
   const teamName = team?.name ?? assignment.teamId;
   const teamSize = team?.teamSize ?? '—';
   const totalCost = team?.totalTeamCost != null ? formatCurrency(team.totalTeamCost) : '—';
@@ -419,7 +458,7 @@ function renderTeamCard(epicId, assignment, team, readOnly = false) {
     )
   );
   optionsWrap.appendChild(
-    renderDurationPicker(epicId, assignment, () => renderEpicDetail(getEpicById(epicId)), readOnly)
+    renderDurationPicker(epicId, assignment, () => renderEpicDetail(getEpicById(epicId)), readOnly, isHighConfidence)
   );
 
   card.querySelector('.btn-notes').addEventListener('click', () => {
@@ -555,7 +594,7 @@ function renderEpicDetail(epic) {
   const cardsContainer = teamsSection.querySelector('#teamCards');
   for (const a of assignments) {
     const team = getTeamById(a.teamId);
-    cardsContainer.appendChild(renderTeamCard(realEpic.id, a, team, isSnapshotView));
+    cardsContainer.appendChild(renderTeamCard(realEpic.id, a, team, isSnapshotView, confidenceMode === 'high'));
   }
 
   teamsSection.querySelector('#teamSelect')?.addEventListener('change', (e) => {
@@ -606,7 +645,7 @@ function renderEpicDetail(epic) {
   valueFinancialsSection.appendChild(
     renderEbitdaBoxes(realEpic.id, annEbitda, inYearEbitda, setAnnualizedEbitdaRange, setInYearEbitdaRange, () =>
       renderEpicDetail(getEpicById(realEpic.id))
-    , isSnapshotView)
+    , isSnapshotView, confidenceMode === 'high')
   );
   const quickAddMetrics = DEFAULT_METRICS.filter((m) => QUICK_ADD_METRIC_IDS.includes(m.id));
   const availableMetrics = quickAddMetrics.filter((m) => !epicMetrics.includes(m.id));
@@ -702,7 +741,8 @@ function renderEpicDetail(epic) {
       setValueDeliveryDate,
       () => renderEpicDetail(getEpicById(realEpic.id)),
       isSnapshotView,
-      () => renderEpicDetail(getEpicById(realEpic.id))
+      () => renderEpicDetail(getEpicById(realEpic.id)),
+      confidenceMode === 'high'
     )
   );
 
@@ -750,7 +790,12 @@ function renderEpicDetail(epic) {
           </div>
         </div>
       `;
+      const isHighConfidence = confidenceMode === 'high';
       detailControlBarEl.innerHTML = `
+        <div class="confidence-mode-toggle">
+          <button type="button" class="confidence-mode-btn ${confidenceMode === 'ranges' ? 'active' : ''}" data-mode="ranges">Confidence Ranges</button>
+          <button type="button" class="confidence-mode-btn ${confidenceMode === 'high' ? 'active' : ''}" data-mode="high">High Confidence</button>
+        </div>
         <span class="mode-indicator ${isSnapshotView ? 'mode-viewing' : 'mode-editing'}">${isSnapshotView ? 'Viewing' : 'Editing'}</span>
         <button type="button" class="btn-snapshot" id="btnSnapshot">Snapshot ⌘S</button>
         <select class="snapshot-select" id="snapshotSelect">
@@ -762,6 +807,15 @@ function renderEpicDetail(epic) {
           <button type="button" class="btn-snapshot-action" id="btnCopyCurrent">Copy And Make Current</button>
         ` : ''}
       `;
+      detailControlBarEl.querySelectorAll('.confidence-mode-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.mode;
+          if (mode !== 'ranges' && mode !== 'high') return;
+          confidenceMode = mode;
+          try { localStorage.setItem(CONFIDENCE_MODE_KEY, mode); } catch (_) {}
+          renderEpicDetail(getEpicById(realEpic.id));
+        });
+      });
       detailControlBarEl.querySelector('#btnSnapshot')?.addEventListener('click', () => {
         openSnapshotNotesModal(realEpic.id, (notes) => {
           captureEpicSnapshot(realEpic.id, notes);
@@ -865,6 +919,9 @@ function durationToSprintRange(unit, min, max) {
   } else if (unit === 'years') {
     minSprints = mn * 24;
     maxSprints = mx * 24;
+  } else if (unit === 'sprints') {
+    minSprints = mn;
+    maxSprints = mx;
   }
   return { min: minSprints, max: maxSprints };
 }
@@ -992,130 +1049,209 @@ const INYEAR_PILLS = [
   { label: 'Mostly Next Year', type: 'mostly', widthPct: 34 },
 ];
 
-function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, onCommit, readOnly = false) {
+function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, onCommit, readOnly = false, isHighConfidence = false) {
   let annMin = Math.max(0, Math.min(EBITDA_MAX, annEbitda?.min ?? 0));
   let annMax = Math.max(annMin, Math.min(EBITDA_MAX, annEbitda?.max ?? 0));
   let inYearMin = Math.max(0, Math.min(EBITDA_MAX, inYearEbitda?.min ?? 0));
   let inYearMax = Math.max(inYearMin, Math.min(EBITDA_MAX, inYearEbitda?.max ?? 0));
+  if (isHighConfidence) {
+    annMax = annMin;
+    inYearMax = Math.min(inYearMin, annMin);
+    inYearMin = inYearMax;
+  }
+
+  const annVal = isHighConfidence
+    ? Math.max(0, Math.min(EBITDA_MAX, getDisplayValueForAnnualizedEbitda(annEbitda)))
+    : annMin;
+  const inYearVal = isHighConfidence
+    ? Math.max(0, Math.min(EBITDA_MAX, getDisplayValueForInYearEbitda(inYearEbitda, annEbitda)))
+    : inYearMin;
+  const EBITDA_PILL_VALUES = { Average: 2, Overperform: 10, 'Game Changer': 32 };
 
   const container = document.createElement('div');
   container.className = 'ebitda-boxes';
   const disabledAttr = readOnly ? ' disabled' : '';
-  container.innerHTML = `
-    <div class="ebitda-box">
-      <div class="ebitda-box-header">
-        <div class="ebitda-box-label">Annualized EBITDA</div>
-        <div class="ebitda-box-fields">
-          <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
-          <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
+
+  if (isHighConfidence) {
+    container.innerHTML = `
+      <div class="ebitda-box">
+        <div class="ebitda-box-header">
+          <div class="ebitda-box-label">Annualized EBITDA</div>
+          <div class="ebitda-box-fields">
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Value</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="value">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annVal)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="down"${disabledAttr}>▼</button></div></label>
+          </div>
+        </div>
+        <div class="ebitda-ann-pills">
+          ${EBITDA_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-value="${EBITDA_PILL_VALUES[p.label] ?? 0}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
         </div>
       </div>
-      <div class="ebitda-ann-pills">
-        ${EBITDA_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-min="${p.minDollars}" data-max="${p.maxDollars}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
-      </div>
-    </div>
-    <div class="ebitda-box">
-      <div class="ebitda-box-header">
-        <div class="ebitda-box-label">In Year EBITDA</div>
-        <div class="ebitda-box-fields">
-          <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
-          <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
+      <div class="ebitda-box">
+        <div class="ebitda-box-header">
+          <div class="ebitda-box-label">In Year EBITDA</div>
+          <div class="ebitda-box-fields">
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Value</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="value">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearVal)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="value" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="value" data-dir="down"${disabledAttr}>▼</button></div></label>
+          </div>
+        </div>
+        <div class="ebitda-inyear-pills">
+          ${INYEAR_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-inyear" data-pill="${escapeHtml(p.type)}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
         </div>
       </div>
-      <div class="ebitda-inyear-pills">
-        ${INYEAR_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-inyear" data-pill="${escapeHtml(p.type)}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
+    `;
+  } else {
+    container.innerHTML = `
+      <div class="ebitda-box">
+        <div class="ebitda-box-header">
+          <div class="ebitda-box-label">Annualized EBITDA</div>
+          <div class="ebitda-box-fields">
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
+          </div>
+        </div>
+        <div class="ebitda-ann-pills">
+          ${EBITDA_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-min="${p.minDollars}" data-max="${p.maxDollars}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
+        </div>
       </div>
-    </div>
-  `;
+      <div class="ebitda-box">
+        <div class="ebitda-box-header">
+          <div class="ebitda-box-label">In Year EBITDA</div>
+          <div class="ebitda-box-fields">
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
+            <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
+          </div>
+        </div>
+        <div class="ebitda-inyear-pills">
+          ${INYEAR_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-inyear" data-pill="${escapeHtml(p.type)}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
 
   function update(box, edge, val) {
     const valEl = container.querySelector(`.ebitda-field-value[data-box="${box}"][data-edge="${edge}"]`);
     if (valEl) valEl.textContent = formatCurrency(ebitdaSliderToDollars(val));
   }
 
-  container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
-    pill.addEventListener('click', () => {
-      if (readOnly) return;
-      const minSlider = ebitdaDollarsToSlider(Number(pill.dataset.min));
-      const maxSlider = ebitdaDollarsToSlider(Number(pill.dataset.max));
-      annMin = minSlider;
-      annMax = maxSlider;
-      setAnn(epicId, annMin, annMax);
-      update('ann', 'min', annMin);
-      update('ann', 'max', annMax);
-      onCommit();
-    });
-  });
-
-  container.querySelectorAll('.ebitda-inyear-pills .ebitda-pill').forEach((pill) => {
-    pill.addEventListener('click', () => {
-      if (readOnly) return;
-      let newInYearMin;
-      let newInYearMax;
-      switch (pill.dataset.pill) {
-        case 'high':
-          newInYearMin = Math.round(annMin * 0.8);
-          newInYearMax = annMax;
-          break;
-        case 'mixed':
-          newInYearMin = Math.round(annMax * 0.4);
-          newInYearMax = Math.round(annMax * 0.6);
-          break;
-        case 'mostly':
-          newInYearMin = Math.round(annMax * 0.1);
-          newInYearMax = Math.round(annMax * 0.3);
-          break;
-        default:
-          return;
-      }
-      newInYearMin = Math.max(0, Math.min(EBITDA_MAX, newInYearMin));
-      newInYearMax = Math.max(newInYearMin, Math.min(annMax, newInYearMax));
-      inYearMin = newInYearMin;
-      inYearMax = newInYearMax;
-      setInYear(epicId, inYearMin, inYearMax);
-      update('inyear', 'min', inYearMin);
-      update('inyear', 'max', inYearMax);
-      onCommit();
-    });
-  });
-
-  container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (readOnly) return;
-      const box = btn.dataset.box;
-      const edge = btn.dataset.edge;
-      const dir = btn.dataset.dir;
-      const delta = dir === 'up' ? 1 : -1;
-
-      if (box === 'ann') {
-        if (edge === 'min') {
-          annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
-          if (annMin > annMax) annMax = annMin;
-        } else {
-          annMax = Math.max(0, Math.min(EBITDA_MAX, annMax + delta));
-          if (annMax < annMin) annMin = annMax;
-        }
+  if (isHighConfidence) {
+    container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        if (readOnly) return;
+        const v = Number(pill.dataset.value ?? 0);
+        annMin = Math.max(0, Math.min(EBITDA_MAX, v));
+        annMax = annMin;
         setAnn(epicId, annMin, annMax);
-      } else {
-        if (edge === 'min') {
-          inYearMin = Math.max(0, Math.min(EBITDA_MAX, inYearMin + delta));
-          if (inYearMin > inYearMax) inYearMax = inYearMin;
-        } else {
-          inYearMax = Math.max(0, Math.min(EBITDA_MAX, inYearMax + delta));
-          if (inYearMax < inYearMin) inYearMin = inYearMax;
+        update('ann', 'value', annMin);
+        onCommit();
+      });
+    });
+    container.querySelectorAll('.ebitda-inyear-pills .ebitda-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        if (readOnly) return;
+        let v;
+        switch (pill.dataset.pill) {
+          case 'high': v = Math.round(annMin * 0.8); break;
+          case 'mixed': v = Math.round(annMin * 0.5); break;
+          case 'mostly': v = Math.round(annMin * 0.2); break;
+          default: return;
         }
-        setInYear(epicId, inYearMin, inYearMax);
-      }
-      if (box === 'ann') {
+        v = Math.max(0, Math.min(annMin, v));
+        inYearMin = v;
+        inYearMax = v;
+        setInYear(epicId, v, v);
+        update('inyear', 'value', v);
+        onCommit();
+      });
+    });
+    container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (readOnly) return;
+        const box = btn.dataset.box;
+        const dir = btn.dataset.dir;
+        const delta = dir === 'up' ? 1 : -1;
+        if (box === 'ann') {
+          annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
+          annMax = annMin;
+          setAnn(epicId, annMin, annMax);
+          update('ann', 'value', annMin);
+        } else {
+          inYearMin = Math.max(0, Math.min(annMin, inYearMin + delta));
+          inYearMax = inYearMin;
+          setInYear(epicId, inYearMin, inYearMax);
+          update('inyear', 'value', inYearMin);
+        }
+        onCommit();
+      });
+    });
+  } else {
+    container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        if (readOnly) return;
+        const minSlider = ebitdaDollarsToSlider(Number(pill.dataset.min));
+        const maxSlider = ebitdaDollarsToSlider(Number(pill.dataset.max));
+        annMin = minSlider;
+        annMax = maxSlider;
+        setAnn(epicId, annMin, annMax);
         update('ann', 'min', annMin);
         update('ann', 'max', annMax);
-      } else {
+        onCommit();
+      });
+    });
+    container.querySelectorAll('.ebitda-inyear-pills .ebitda-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        if (readOnly) return;
+        let newInYearMin, newInYearMax;
+        switch (pill.dataset.pill) {
+          case 'high': newInYearMin = Math.round(annMin * 0.8); newInYearMax = annMax; break;
+          case 'mixed': newInYearMin = Math.round(annMax * 0.4); newInYearMax = Math.round(annMax * 0.6); break;
+          case 'mostly': newInYearMin = Math.round(annMax * 0.1); newInYearMax = Math.round(annMax * 0.3); break;
+          default: return;
+        }
+        newInYearMin = Math.max(0, Math.min(EBITDA_MAX, newInYearMin));
+        newInYearMax = Math.max(newInYearMin, Math.min(annMax, newInYearMax));
+        inYearMin = newInYearMin;
+        inYearMax = newInYearMax;
+        setInYear(epicId, inYearMin, inYearMax);
         update('inyear', 'min', inYearMin);
         update('inyear', 'max', inYearMax);
-      }
-      onCommit();
+        onCommit();
+      });
     });
-  });
+    container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (readOnly) return;
+        const box = btn.dataset.box;
+        const edge = btn.dataset.edge;
+        const dir = btn.dataset.dir;
+        const delta = dir === 'up' ? 1 : -1;
+        if (box === 'ann') {
+          if (edge === 'min') {
+            annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
+            if (annMin > annMax) annMax = annMin;
+          } else {
+            annMax = Math.max(0, Math.min(EBITDA_MAX, annMax + delta));
+            if (annMax < annMin) annMin = annMax;
+          }
+          setAnn(epicId, annMin, annMax);
+        } else {
+          if (edge === 'min') {
+            inYearMin = Math.max(0, Math.min(EBITDA_MAX, inYearMin + delta));
+            if (inYearMin > inYearMax) inYearMax = inYearMin;
+          } else {
+            inYearMax = Math.max(0, Math.min(EBITDA_MAX, inYearMax + delta));
+            if (inYearMax < inYearMin) inYearMin = inYearMax;
+          }
+          setInYear(epicId, inYearMin, inYearMax);
+        }
+        if (box === 'ann') {
+          update('ann', 'min', annMin);
+          update('ann', 'max', annMax);
+        } else {
+          update('inyear', 'min', inYearMin);
+          update('inyear', 'max', inYearMax);
+        }
+        onCommit();
+      });
+    });
+  }
 
   return container;
 }
@@ -1225,7 +1361,7 @@ function syncValueDeliveryToProjectEnd(epicId) {
   syncValueDeliveryFromEpics(epicId, expectedSprints);
 }
 
-function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprints, expDeliveryStartIdx, expDeliveryEndIdx, setExpDelivery, setValueDelivery, onCommit, readOnly = false, onCommitExpDelivery = null) {
+function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprints, expDeliveryStartIdx, expDeliveryEndIdx, setExpDelivery, setValueDelivery, onCommit, readOnly = false, onCommitExpDelivery = null, isHighConfidence = false) {
   const sprints = getVisibleSprints();
   const maxIdx = Math.max(0, sprints.length - 1);
   const pct = maxIdx > 0 ? (i) => (i / maxIdx) * 100 : (i) => (i === 0 ? 100 : 0);
@@ -1241,6 +1377,9 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
     : null;
   if (shadeMinEndIdx != null && shadeMaxEndIdx != null && shadeMaxEndIdx < shadeMinEndIdx) {
     shadeMaxEndIdx = shadeMinEndIdx;
+  }
+  if (isHighConfidence && shadeMinEndIdx != null) {
+    shadeMaxEndIdx = shadeMinEndIdx; // single point, no range band
   }
   const showShade = shadeStartIdx != null && shadeMaxEndIdx != null && shadeStartIdx <= shadeMaxEndIdx;
 
@@ -1266,73 +1405,105 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
     }
     if (startIdx > endIdx) endIdx = startIdx;
     if (endIdx > maxIdx) endIdx = maxIdx;
+    if (isHighConfidence) endIdx = startIdx;
 
     const disabledAttr = readOnly ? ' disabled' : '';
+    const rowLabel = isHighConfidence ? label.replace(' (Min,Max)', '') : label;
     const row = document.createElement('div');
     row.className = 'timeline-row';
-    row.innerHTML = `
-      <div class="timeline-row-label">${escapeHtml(label)}</div>
-      <div class="timeline-row-track">
-        <div class="dual-range-wrap sprint-dual-range" style="--range-min: ${pct(startIdx)}%; --range-max: ${pct(endIdx)}%;">
-          <input type="range" class="slider range-min" min="0" max="${maxIdx}" step="1" value="${startIdx}"${disabledAttr} />
-          <input type="range" class="slider range-max" min="0" max="${maxIdx}" step="1" value="${endIdx}"${disabledAttr} />
-          ${!readOnly ? `<div class="range-drag" style="left: ${pct(startIdx)}%; width: ${Math.max(2, pct(endIdx) - pct(startIdx))}%;"></div>` : ''}
+    if (isHighConfidence) {
+      row.innerHTML = `
+        <div class="timeline-row-label">${escapeHtml(rowLabel)}</div>
+        <div class="timeline-row-track">
+          <div class="dual-range-wrap sprint-dual-range sprint-single-range" style="--range-min: ${pct(startIdx)}%; --range-max: ${pct(startIdx)}%;">
+            <input type="range" class="slider range-single" min="0" max="${maxIdx}" step="1" value="${startIdx}"${disabledAttr} />
+          </div>
+          <span class="timeline-row-value">${escapeHtml(formatSprintRangeFromList(startIdx, startIdx, sprints))}</span>
         </div>
-        <span class="timeline-row-value">${escapeHtml(formatSprintRangeFromList(startIdx, endIdx, sprints))}</span>
-      </div>
-    `;
+      `;
+    } else {
+      row.innerHTML = `
+        <div class="timeline-row-label">${escapeHtml(rowLabel)}</div>
+        <div class="timeline-row-track">
+          <div class="dual-range-wrap sprint-dual-range" style="--range-min: ${pct(startIdx)}%; --range-max: ${pct(endIdx)}%;">
+            <input type="range" class="slider range-min" min="0" max="${maxIdx}" step="1" value="${startIdx}"${disabledAttr} />
+            <input type="range" class="slider range-max" min="0" max="${maxIdx}" step="1" value="${endIdx}"${disabledAttr} />
+            ${!readOnly ? `<div class="range-drag" style="left: ${pct(startIdx)}%; width: ${Math.max(2, pct(endIdx) - pct(startIdx))}%;"></div>` : ''}
+          </div>
+          <span class="timeline-row-value">${escapeHtml(formatSprintRangeFromList(startIdx, endIdx, sprints))}</span>
+        </div>
+      `;
+    }
 
     const wrap = row.querySelector('.sprint-dual-range');
     const minInput = row.querySelector('.range-min');
     const maxInput = row.querySelector('.range-max');
-    const rangeDragEl = wrap.querySelector('.range-drag');
+    const singleInput = row.querySelector('.range-single');
+    const rangeDragEl = wrap?.querySelector('.range-drag');
     const valueEl = row.querySelector('.timeline-row-value');
 
     function updateHighlight() {
-      const mn = Number(minInput.value);
-      const mx = Number(maxInput.value);
+      const mn = isHighConfidence ? Number(singleInput?.value ?? startIdx) : Number(minInput?.value ?? startIdx);
+      const mx = isHighConfidence ? mn : Number(maxInput?.value ?? endIdx);
       const left = pct(mn);
-      const w = pct(mx) - left;
+      const w = Math.max(1, pct(mx) - left);
       highlightEl.style.left = `${left}%`;
       highlightEl.style.width = `${w}%`;
       highlightEl.style.opacity = '1';
     }
 
     function update() {
-      let mn = Number(minInput.value);
-      let mx = Number(maxInput.value);
-      if (sprints[mn]?.isBlocked) mn = Math.min(getNextNonBlockedIndex(mn), maxIdx);
-      if (mn > mx) mx = mn;
-      minInput.value = mn;
-      maxInput.value = mx;
-      setter(epicId, sprintIndexToIdInList(mn, sprints), sprintIndexToIdInList(mx, sprints));
-      valueEl.textContent = formatSprintRangeFromList(mn, mx, sprints);
-      wrap.style.setProperty('--range-min', `${pct(mn)}%`);
-      wrap.style.setProperty('--range-max', `${pct(mx)}%`);
-      if (rangeDragEl) {
-        rangeDragEl.style.left = `${pct(mn)}%`;
-        rangeDragEl.style.width = `${Math.max(2, pct(mx) - pct(mn))}%`;
+      if (isHighConfidence && singleInput) {
+        let idx = Number(singleInput.value);
+        if (sprints[idx]?.isBlocked) idx = Math.min(getNextNonBlockedIndex(idx), maxIdx);
+        singleInput.value = idx;
+        const sid = sprintIndexToIdInList(idx, sprints);
+        setter(epicId, sid, sid);
+        valueEl.textContent = formatSprintRangeFromList(idx, idx, sprints);
+        wrap?.style.setProperty('--range-min', `${pct(idx)}%`);
+        wrap?.style.setProperty('--range-max', `${pct(idx)}%`);
+      } else if (minInput && maxInput) {
+        let mn = Number(minInput.value);
+        let mx = Number(maxInput.value);
+        if (sprints[mn]?.isBlocked) mn = Math.min(getNextNonBlockedIndex(mn), maxIdx);
+        if (mn > mx) mx = mn;
+        minInput.value = mn;
+        maxInput.value = mx;
+        setter(epicId, sprintIndexToIdInList(mn, sprints), sprintIndexToIdInList(mx, sprints));
+        valueEl.textContent = formatSprintRangeFromList(mn, mx, sprints);
+        wrap?.style.setProperty('--range-min', `${pct(mn)}%`);
+        wrap?.style.setProperty('--range-max', `${pct(mx)}%`);
+        if (rangeDragEl) {
+          rangeDragEl.style.left = `${pct(mn)}%`;
+          rangeDragEl.style.width = `${Math.max(2, pct(mx) - pct(mn))}%`;
+        }
       }
       updateHighlight();
     }
 
     if (!readOnly) {
-      minInput.addEventListener('input', () => {
-        let mn = Number(minInput.value);
-        if (sprints[mn]?.isBlocked) minInput.value = mn = Math.min(getNextNonBlockedIndex(mn), maxIdx);
-        if (mn > Number(maxInput.value)) maxInput.value = mn;
-        update();
-      });
-      maxInput.addEventListener('input', () => {
-        if (Number(maxInput.value) < Number(minInput.value)) minInput.value = maxInput.value;
-        update();
-      });
-      minInput.addEventListener('change', commitFn);
-      maxInput.addEventListener('change', commitFn);
-      [minInput, maxInput].forEach((el) => {
-        el.addEventListener('mouseup', commitFn);
-        el.addEventListener('touchend', commitFn);
-      });
+      if (isHighConfidence && singleInput) {
+        singleInput.addEventListener('input', () => { update(); });
+        singleInput.addEventListener('change', commitFn);
+        singleInput.addEventListener('mouseup', commitFn);
+        singleInput.addEventListener('touchend', commitFn);
+      } else if (minInput && maxInput) {
+        minInput.addEventListener('input', () => {
+          let mn = Number(minInput.value);
+          if (sprints[mn]?.isBlocked) minInput.value = mn = Math.min(getNextNonBlockedIndex(mn), maxIdx);
+          if (mn > Number(maxInput.value)) maxInput.value = mn;
+          update();
+        });
+        maxInput.addEventListener('input', () => {
+          if (Number(maxInput.value) < Number(minInput.value)) minInput.value = maxInput.value;
+          update();
+        });
+        minInput.addEventListener('change', commitFn);
+        maxInput.addEventListener('change', commitFn);
+        [minInput, maxInput].forEach((el) => {
+          el.addEventListener('mouseup', commitFn);
+          el.addEventListener('touchend', commitFn);
+        });
 
       function startRangeDrag(e) {
         e.preventDefault();
@@ -1373,6 +1544,7 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
       if (rangeDragEl) {
         rangeDragEl.addEventListener('mousedown', startRangeDrag);
         rangeDragEl.addEventListener('touchstart', startRangeDrag, { passive: false });
+      }
       }
     }
 
