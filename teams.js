@@ -3,7 +3,8 @@ let teamsData = null;
 
 export async function loadTeams() {
   if (teamsData) return teamsData;
-  const res = await fetch('/teams.json');
+  const url = new URL('teams.json', import.meta.url).href;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to load teams: ${res.status}`);
   teamsData = await res.json();
   return teamsData;

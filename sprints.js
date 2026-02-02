@@ -3,7 +3,8 @@ let sprintsData = null;
 
 export async function loadSprints() {
   if (sprintsData) return sprintsData;
-  const res = await fetch('/sprints.json');
+  const url = new URL('sprints.json', import.meta.url).href;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to load sprints: ${res.status}`);
   sprintsData = await res.json();
   return sprintsData;
