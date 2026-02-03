@@ -1131,6 +1131,17 @@ function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, o
     if (valEl) valEl.textContent = formatCurrency(ebitdaSliderToDollars(val));
   }
 
+  function flashAnnualizedLimitAfterCommit(edge) {
+    requestAnimationFrame(() => {
+      const valEl = document.querySelector(`.ebitda-field-value[data-box="ann"][data-edge="${edge}"]`);
+      if (!valEl) return;
+      valEl.classList.remove('ebitda-limit-flash');
+      void valEl.offsetHeight;
+      valEl.classList.add('ebitda-limit-flash');
+      setTimeout(() => valEl.classList.remove('ebitda-limit-flash'), 500);
+    });
+  }
+
   if (isHighConfidence) {
     container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
       pill.addEventListener('click', () => {
@@ -1173,12 +1184,16 @@ function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, o
           setAnn(epicId, annMin, annMax);
           update('ann', 'value', annMin);
         } else {
-          inYearMin = Math.max(0, Math.min(annMin, inYearMin + delta));
+          const requested = inYearMin + delta;
+          inYearMin = Math.max(0, Math.min(annMin, requested));
           inYearMax = inYearMin;
+          const hitLimit = delta > 0 && requested > annMin;
           setInYear(epicId, inYearMin, inYearMax);
           update('inyear', 'value', inYearMin);
+          onCommit();
+          if (hitLimit) flashAnnualizedLimitAfterCommit('value');
         }
-        onCommit();
+        if (box === 'ann') onCommit();
       });
     });
   } else {
@@ -1239,16 +1254,23 @@ function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, o
             inYearMax = Math.max(0, Math.min(EBITDA_MAX, inYearMax + delta));
             if (inYearMax < inYearMin) inYearMin = inYearMax;
           }
+          const hitLimit = delta > 0 && (inYearMin > annMax || inYearMax > annMax);
+          if (hitLimit) {
+            inYearMin = Math.min(inYearMin, annMax);
+            inYearMax = Math.min(inYearMax, annMax);
+            if (inYearMin > inYearMax) inYearMax = inYearMin;
+          }
           setInYear(epicId, inYearMin, inYearMax);
+          update('inyear', 'min', inYearMin);
+          update('inyear', 'max', inYearMax);
+          onCommit();
+          if (hitLimit) flashAnnualizedLimitAfterCommit('max');
         }
         if (box === 'ann') {
           update('ann', 'min', annMin);
           update('ann', 'max', annMax);
-        } else {
-          update('inyear', 'min', inYearMin);
-          update('inyear', 'max', inYearMax);
+          onCommit();
         }
-        onCommit();
       });
     });
   }
