@@ -265,21 +265,7 @@ export function setAnnualizedEbitdaRange(epicId, min, max) {
   epic.annualizedEbitda.max = mx;
   recordHistory(epic.annualizedEbitda.minHistory, mn);
   recordHistory(epic.annualizedEbitda.maxHistory, mx);
-  if (!epic.inYearEbitdaSet) {
-    epic.inYearEbitda.min = mn;
-    epic.inYearEbitda.max = mx;
-    recordHistory(epic.inYearEbitda.minHistory, mn);
-    recordHistory(epic.inYearEbitda.maxHistory, mx);
-  } else {
-    const inMn = Math.min(epic.inYearEbitda.min, mx);
-    const inMx = Math.min(epic.inYearEbitda.max, mx);
-    if (inMn !== epic.inYearEbitda.min || inMx !== epic.inYearEbitda.max) {
-      epic.inYearEbitda.min = Math.min(inMn, inMx);
-      epic.inYearEbitda.max = inMx;
-      recordHistory(epic.inYearEbitda.minHistory, epic.inYearEbitda.min);
-      recordHistory(epic.inYearEbitda.maxHistory, epic.inYearEbitda.max);
-    }
-  }
+  // In Year EBITDA sync logic removed - In Year EBITDA is no longer an input
   return true;
 }
 

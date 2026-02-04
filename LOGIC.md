@@ -209,7 +209,6 @@ All of these are computed from team assignments (and dependency for delivery len
 
 **High Confidence**: UI shows a single value per input. Stored data remains min/max; display uses:
 - **Annualized EBITDA**: `annEbitda.min` (display value).
-- **In Year EBITDA**: `min(inYearEbitda.min, annEbitda.min)` (capped for display).
 - **Timeline**: `startSprintId` (or `endSprintId` if start null) for each range.
 - **Duration**: `durationMin` per team.
 
@@ -230,13 +229,33 @@ Pills (Average / Overperform / Game Changer) map to dollar ranges, then to slide
 
 | Input / metric            | Hard limits                         | Drives / constrained by                                      |
 |---------------------------|-------------------------------------|--------------------------------------------------------------|
-| Annualized EBITDA         | 0–100 ($0–$10M), min ≤ max          | Cost of delay; caps In Year; can sync or clamp In Year      |
-| In Year EBITDA            | 0–100, ≤ Annualized max, min ≤ max  | Current year total (if Value Delivery in year)              |
+| Annualized EBITDA         | 0–100 ($0–$10M), min ≤ max          | Cost of delay; drives "{Current Year} Total" calculation     |
+| In Year EBITDA            | (deprecated - no longer an input)   | Remains in data model for backward compatibility            |
 | Involvement               | 0, 1, or 2                         | People range → cost and delivery ranges                     |
 | Duration (per team)        | 1–rangeMax by unit, min ≤ max       | Sprint extent → total sprints, total cost, expected length  |
 | Dependency environment    | 0–3                                 | Blend factor for expected delivery length                   |
 | Expected Delivery Start   | Sprint list, no start on blocked   | Timeline band; Value Delivery start ≥ this                  |
 | Value Delivery Date       | Sprint list; start ≥ Expected start| Current year total (with In Year); can be synced when linked |
 | Team (from teams.json)    | teamSize, totalTeamCost            | Rate and people for all cost/delivery math                  |
+
+---
+
+## 13. "{Current Year} Total" (e.g. 2026 Total)
+
+**What it is**: Total value attributed to the **current calendar year** for this epic, calculated automatically from Expected Delivery range overlap with remainder of 2026.
+
+**Calculation**:
+- **Expected Delivery range**: Spans from Expected Start min to Expected Start max + Delivery max.
+- **Min scenario**: Count sprints in [Expected Start min, Expected Start min + Delivery min] that overlap remainder of 2026 (from today to end of year).
+- **Max scenario**: Count sprints in [Expected Start max, Expected Start max + Delivery max] that overlap remainder of 2026.
+- **2026 Total min** = (min scenario sprint count) × (Cost of Delay min)
+- **2026 Total max** = (max scenario sprint count) × (Cost of Delay max)
+- **Cost of Delay** = Annualized EBITDA ($) ÷ 24 sprints/year
+
+**When it's shown**: Only when there is overlap between Expected Delivery range and remainder of 2026. If no overlap or Expected Delivery not set, shows "—".
+
+**Display**: Shows as min–max range (or single value if min === max).
+
+---
 
 No other hidden caps or formulas apply; all behavior is defined by the code paths and constants referenced in this document.

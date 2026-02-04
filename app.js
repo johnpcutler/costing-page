@@ -10,7 +10,6 @@ import {
   addTeamTodo,
   removeTeamTodo,
   setAnnualizedEbitdaRange,
-  setInYearEbitdaRange,
   setExpectedDeliveryStart,
   setValueDeliveryDate,
   setDependencyEnvironment,
@@ -35,8 +34,125 @@ import {
 } from './epics.js';
 import { loadTeams, getTeamById, getTeams } from './teams.js';
 import { loadSprints, getSprints, getSprintById, getNextNonBlockedIndex } from './sprints.js';
-import { getDisplayValueForAnnualizedEbitda, getDisplayValueForInYearEbitda } from './confidenceMode.js';
+import { getDisplayValueForAnnualizedEbitda } from './confidenceMode.js';
 import { computeProjectTimelineSections } from './timelineSections.js';
+
+const METRIC_DEFINITIONS = {
+  'cost-of-delay': {
+    name: 'Cost of Delay',
+    definition: 'Value lost per sprint if the initiative is delayed by one sprint. Used to compare "cost of waiting" across epics.',
+    calculation: 'Cost of Delay ($/sprint) = Annualized EBITDA ($) ÷ 24 sprints/year',
+    category: 'value'
+  },
+  '2026-ebitda-total': {
+    name: '2026 EBITDA Total',
+    definition: 'Total value attributed to the current calendar year for this epic, calculated automatically from Expected Delivery range overlap with remainder of 2026.',
+    calculation: '2026 EBITDA Total = (sprints in Expected Delivery range overlapping remainder of 2026) × Cost of Delay',
+    category: 'value'
+  },
+  'cd3-range': {
+    name: 'CD3 Range',
+    definition: 'Cost of Delay divided by Duration, forming a range that represents the cost efficiency of delivery.',
+    calculation: 'CD3 Range min = Cost of Delay min ÷ Delivery max sprints\nCD3 Range max = Cost of Delay max ÷ Delivery min sprints',
+    category: 'value'
+  },
+  'cd3-midpoint': {
+    name: 'CD3 Midpoint',
+    definition: 'Midpoint of the CD3 calculation, using the middle of the range for both Cost of Delay and Duration.',
+    calculation: 'CD3 Midpoint = (Cost of Delay midpoint) ÷ (Delivery midpoint)\nWhere Cost of Delay midpoint = (Cost of Delay min + Cost of Delay max) ÷ 2\nAnd Delivery midpoint = (Delivery min + Delivery max) ÷ 2',
+    category: 'value'
+  },
+  'cost-per-resource-per-sprint': {
+    name: 'Cost Per Resource Per Sprint',
+    definition: 'Blended cost per person per sprint across the teams assigned to the epic. Each team has one rate; the app shows the min and max rate across those teams.',
+    calculation: 'Per team: rate = (Total Team Cost ÷ Team Size) ÷ 24 sprints/year\nResult: min(rate) and max(rate) across all assigned teams',
+    category: 'cost'
+  },
+  'cost-per-sprint': {
+    name: 'Cost Per Sprint',
+    definition: 'Total spend per sprint for the epic — the sum of each team\'s burn (people × cost per person per sprint).',
+    calculation: 'Per team: burn = People × Cost Per Resource Per Sprint\nMin burn = Σ (People min × Cost Per Resource Per Sprint)\nMax burn = Σ (People max × Cost Per Resource Per Sprint)\nWhere People comes from Involvement',
+    category: 'cost'
+  },
+  'teams-resources': {
+    name: 'Teams / Resources',
+    definition: 'The number of teams assigned to the epic and the total range of resources (people) involved across all teams.',
+    calculation: 'Teams = count of team assignments\nResources min = sum of people min across all teams (from Involvement)\nResources max = sum of people max across all teams (from Involvement)',
+    category: 'cost'
+  },
+  'total-sprints': {
+    name: 'Total Sprints',
+    definition: 'Total person-sprints (people × sprints) across all teams — capacity consumed by the epic.',
+    calculation: 'Per team: People × Duration (in sprints)\nTotal min = Σ (People min × Duration min)\nTotal max = Σ (People max × Duration max)\nWhere People comes from Involvement and Duration is converted to sprints',
+    category: 'cost'
+  },
+  'expected-start': {
+    name: 'Expected Start',
+    definition: 'The sprint range when work on the epic is expected to start (and optionally the end of that start window).',
+    calculation: 'Directly from Expected Delivery Start dates you set (start and end sprint).',
+    category: 'timeline'
+  },
+  'expected-finish': {
+    name: 'Expected Finish',
+    definition: 'The calculated sprint range when work on the epic is expected to finish, based on when it starts and how long it takes.',
+    calculation: 'Expected Finish min = Expected Start min + Delivery min sprints\nExpected Finish max = Expected Start max + Delivery max sprints',
+    category: 'timeline'
+  },
+  'delivery': {
+    name: 'Delivery',
+    definition: 'How many sprints the work is expected to take, given team durations and how much they can work in parallel vs. in sequence.',
+    calculation: 'From each team\'s Duration (converted to sprints): per team you get a min and max extent.\nParallel (longest): max of all teams\' min extents → delivery min; max of all teams\' max extents → delivery max.\nSequential (sum): sum of all teams\' min extents and sum of all teams\' max extents.\nBlend by Dependency Environment (0–3):\n  Factor f: 0 → 0, 1 → 0.15, 2 → 0.5, 3 → 1\n  Delivery min = round((1 − f) × max_min + f × sum_min)\n  Delivery max = round((1 − f) × max_max + f × sum_max)',
+    category: 'timeline'
+  },
+  'total-cost': {
+    name: 'Total Cost',
+    definition: 'Total estimated cost of the epic — spend over the full delivery period.',
+    calculation: 'Per team: People × Cost Per Resource Per Sprint × Duration (in sprints)\nMin total cost = Σ (People min × Cost Per Resource Per Sprint × Duration min)\nMax total cost = Σ (People max × Cost Per Resource Per Sprint × Duration max)',
+    category: 'cost'
+  },
+  'annualized-ebitda': {
+    name: 'Annualized EBITDA',
+    definition: 'Expected 12-month EBITDA impact of the initiative (yearly run rate). Represents the annual value if the initiative were running for a full year.',
+    calculation: 'You set a min and max (or a single value in High Confidence). Stored as slider units 0–100; each unit = $100,000, so the range is $0 to $10M.\nDollars = slider value × 100,000',
+    category: 'value'
+  },
+  'expected-delivery-start': {
+    name: 'Expected Delivery Start',
+    definition: 'Sprint range when the work is expected to start (and optionally end).',
+    calculation: 'You set start and end sprint directly. If you pick a blocked sprint (e.g. I&P) as start, the app snaps to the next non-blocked sprint.',
+    category: 'timeline'
+  },
+  'value-delivery-start': {
+    name: 'Value Delivery Start',
+    definition: 'The sprint range when value is delivered (e.g. in market). Used to decide if value lands in the current year (for 2026 EBITDA Total).',
+    calculation: 'You set start and end sprint (or leave Value linked so the app sets it from Expected Finish + delivery length). Value Delivery start is never allowed to be before Expected Start.',
+    category: 'timeline'
+  },
+  'project-timeline': {
+    name: 'Project Timeline',
+    definition: 'The time band when the work runs: from Expected Delivery Start, for a length given by Delivery (sprints).',
+    calculation: 'Band start = Expected Delivery Start (min)\nBand "core" end = Expected Start + Delivery min (sprints)\nBand "range" end = Expected Start + Delivery max (sprints)\nShows three sections: Start Range, Overlap, Completion Range',
+    category: 'timeline'
+  },
+  'involvement': {
+    name: 'Involvement',
+    definition: 'How much of each team is on the epic: Individual (1 person), Half Team, or Full Team.',
+    calculation: 'Individual (0): People min = 1, People max = 1\nHalf (1): People min = max(1, ceil(team_size/2) − 1), People max = min(team_size, ceil(team_size/2) + 1)\nFull (2): People min = team_size, People max = team_size',
+    category: 'input'
+  },
+  'duration': {
+    name: 'Duration',
+    definition: 'How long each team works on the epic, in weeks, months, quarters, years, or sprints.',
+    calculation: 'Conversion to sprints:\n  Weeks: ceil(weeks ÷ 2)\n  Months: months × 2\n  Quarters: quarters × 6\n  Years: years × 24\n  Sprints: no conversion\nResult is a min and max extent in sprints used in Total Sprints, Total Cost, and Delivery length.',
+    category: 'input'
+  },
+  'dependency-environment': {
+    name: 'Dependency Environment',
+    definition: 'How much teams can work in parallel vs. must work in sequence. Drives the delivery-length blend.',
+    calculation: 'You choose 0–3. The blend factor f is:\n  0 → 0 (fully parallel)\n  1 → 0.15 (light collaboration)\n  2 → 0.5 (high collaboration)\n  3 → 1 (fully sequential)\nThat f is used in the Delivery formulas (parallel vs. sum of team durations).',
+    category: 'input'
+  }
+};
 
 const epicListEl = document.getElementById('epicList');
 const btnNew = document.getElementById('btnNew');
@@ -49,6 +165,7 @@ const backLink = document.getElementById('backLink');
 let sprintViewRange = '2y';
 let selectedSnapshotIndex = null;
 let initiativeObjectiveEditingId = null;
+let metricsExplanationEnabled = false;
 
 const CONFIDENCE_MODE_KEY = 'ce-two-confidence-mode';
 let confidenceMode = (() => {
@@ -123,8 +240,11 @@ function renderEpicList() {
 function renderOptionPicker(label, options, selectedIndex, onSelect, readOnly = false) {
   const wrap = document.createElement('div');
   wrap.className = 'option-picker';
+  const metricId = label === 'Involvement' ? 'involvement' : null;
+  const labelClass = (metricId && metricsExplanationEnabled) ? 'option-picker-label metric-clickable' : 'option-picker-label';
+  const labelAttr = metricId ? ` data-metric-id="${metricId}"` : '';
   wrap.innerHTML = `
-    <span class="option-picker-label">${escapeHtml(label)}</span>
+    <span class="${labelClass}"${labelAttr}>${escapeHtml(label)}</span>
     <div class="option-picker-options">
       ${options.map((opt, i) => `<button type="button" class="option-btn ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" ${readOnly ? 'disabled' : ''}>${escapeHtml(opt)}</button>`).join('')}
     </div>
@@ -169,7 +289,7 @@ function renderDurationPicker(epicId, assignment, onCommit, readOnly = false, is
 
     if (isHighConfidence) {
       wrap.innerHTML = `
-        <span class="option-picker-label">Extent</span>
+        <span class="option-picker-label ${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="duration">Extent</span>
         <div class="duration-unit-row">
           ${DURATION_UNIT_LABELS.map((lbl, i) => `<button type="button" class="option-btn ${DURATION_UNITS[i] === unit ? 'selected' : ''}" data-unit="${DURATION_UNITS[i]}" ${readOnly ? 'disabled' : ''}>${escapeHtml(lbl)}</button>`).join('')}
         </div>
@@ -182,7 +302,7 @@ function renderDurationPicker(epicId, assignment, onCommit, readOnly = false, is
       `;
     } else {
       wrap.innerHTML = `
-        <span class="option-picker-label">Extent</span>
+        <span class="option-picker-label ${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="duration">Extent</span>
         <div class="duration-unit-row">
           ${DURATION_UNIT_LABELS.map((lbl, i) => `<button type="button" class="option-btn ${DURATION_UNITS[i] === unit ? 'selected' : ''}" data-unit="${DURATION_UNITS[i]}" ${readOnly ? 'disabled' : ''}>${escapeHtml(lbl)}</button>`).join('')}
         </div>
@@ -409,6 +529,41 @@ function openAddTodoModal(epicId, teamId, teamName, onAdd) {
   textarea.focus();
 }
 
+function openMetricDefinitionModal(metricId) {
+  const metric = METRIC_DEFINITIONS[metricId];
+  if (!metric) return;
+  
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-metric-definition">
+      <div class="modal-header">
+        <h4 class="modal-title">${escapeHtml(metric.name)}</h4>
+        <button type="button" class="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="metric-definition-section">
+          <h5 class="metric-definition-label">Definition</h5>
+          <p class="metric-definition-text">${escapeHtml(metric.definition)}</p>
+        </div>
+        <div class="metric-definition-section">
+          <h5 class="metric-definition-label">Calculation</h5>
+          <pre class="metric-definition-calculation">${escapeHtml(metric.calculation)}</pre>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  function close() {
+    overlay.remove();
+  }
+  
+  overlay.querySelector('.modal-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  
+  document.body.appendChild(overlay);
+}
+
 function renderTeamCard(epicId, assignment, team, readOnly = false, isHighConfidence = false) {
   const teamName = team?.name ?? assignment.teamId;
   const teamSize = team?.teamSize ?? '—';
@@ -510,10 +665,17 @@ function renderEpicDetail(epic) {
   const availableTeams = getTeams().filter((t) => !assignedIds.has(t.id));
 
   const norm = viewEpic;
+  const currentYear = new Date().getFullYear();
   const dependencyEnv = norm.dependencyEnvironment ?? 0;
   const annEbitda = norm.annualizedEbitda ?? { min: 0, max: 0 };
-  const costOfDelayMin = ebitdaSliderToDollars(annEbitda.min) / SPRINTS_PER_YEAR;
-  const costOfDelayMax = ebitdaSliderToDollars(annEbitda.max) / SPRINTS_PER_YEAR;
+  const annEbitdaMinDollars = ebitdaSliderToDollars(annEbitda.min);
+  const annEbitdaMaxDollars = ebitdaSliderToDollars(annEbitda.max);
+  const annEbitdaStr = annEbitdaMinDollars === annEbitdaMaxDollars
+    ? formatCurrency(annEbitdaMinDollars)
+    : `${formatCurrency(annEbitdaMinDollars)}–${formatCurrency(annEbitdaMaxDollars)}`;
+  
+  const costOfDelayMin = annEbitdaMinDollars / SPRINTS_PER_YEAR;
+  const costOfDelayMax = annEbitdaMaxDollars / SPRINTS_PER_YEAR;
   const costOfDelayStr = costOfDelayMin === costOfDelayMax
     ? `${formatCurrency(costOfDelayMin)}/sprint`
     : `${formatCurrency(costOfDelayMin)}–${formatCurrency(costOfDelayMax)}/sprint`;
@@ -524,8 +686,49 @@ function renderEpicDetail(epic) {
   const totalCost = computeTotalCost(assignments);
   const expectedSprints = computeExpectedSprints(assignments, dependencyEnv);
 
+  // CD3 Range calculation: Cost of Delay / Duration
+  const cd3Min = expectedSprints && expectedSprints.max > 0 
+    ? costOfDelayMin / expectedSprints.max 
+    : null;
+  const cd3Max = expectedSprints && expectedSprints.min > 0 
+    ? costOfDelayMax / expectedSprints.min 
+    : null;
+  const cd3RangeStr = (cd3Min != null && cd3Max != null)
+    ? (cd3Min === cd3Max 
+      ? formatCurrency(cd3Min)
+      : `${formatCurrency(cd3Min)}–${formatCurrency(cd3Max)}`)
+    : '—';
+
+  // CD3 Midpoint calculation
+  const cd3Midpoint = (expectedSprints && costOfDelayMin != null && costOfDelayMax != null)
+    ? (() => {
+        const codMidpoint = (costOfDelayMin + costOfDelayMax) / 2;
+        const deliveryMidpoint = (expectedSprints.min + expectedSprints.max) / 2;
+        return deliveryMidpoint > 0 ? codMidpoint / deliveryMidpoint : null;
+      })()
+    : null;
+  const cd3MidpointStr = cd3Midpoint != null ? formatCurrency(cd3Midpoint) : '—';
+
   const costPerResourceStr = costPerResourcePerSprint ? formatRange(costPerResourcePerSprint.min, costPerResourcePerSprint.max, formatCurrency) : '—';
   const costStr = assignments.length > 0 ? formatRange(costPerSprint.min, costPerSprint.max, formatCurrency) : '—';
+
+  // Teams / Resources calculation
+  const teamsCount = assignments.length;
+  let resourcesMin = 0;
+  let resourcesMax = 0;
+  for (const a of assignments) {
+    const team = getTeamById(a.teamId);
+    if (!team?.teamSize) continue;
+    const { min: peopleMin, max: peopleMax } = getPeopleRangeFromInvolvement(a.involvement, team.teamSize);
+    resourcesMin += peopleMin;
+    resourcesMax += peopleMax;
+  }
+  const teamsResourcesStr = teamsCount === 0 
+    ? '—'
+    : teamsCount === 1
+      ? `1 team, ${resourcesMin === resourcesMax ? resourcesMin : `${resourcesMin}–${resourcesMax}`} resources`
+      : `${teamsCount} teams, ${resourcesMin === resourcesMax ? resourcesMin : `${resourcesMin}–${resourcesMax}`} resources`;
+  
   const totalSprintStr = totalSprints ? `${formatRange(totalSprints.min, totalSprints.max, (n) => `${n}`)} total` : '—';
   const totalCostStr = totalCost ? formatRange(totalCost.min, totalCost.max, formatCurrency) : '—';
   const deliveryStr = expectedSprints
@@ -539,7 +742,11 @@ function renderEpicDetail(epic) {
   const expStartIdx = sprintIdToIndexInList(expDelivery.startSprintId, visibleSprintsForMetrics);
   const expEndIdx = sprintIdToIndexInList(expDelivery.endSprintId, visibleSprintsForMetrics);
   const expectedStartSprintStr = (expDelivery.startSprintId || expDelivery.endSprintId)
-    ? formatSprintRangeShort(expStartIdx, expEndIdx, visibleSprintsForMetrics)
+    ? formatSprintRangeFromList(expStartIdx, expEndIdx, visibleSprintsForMetrics)
+    : '—';
+
+  const expectedFinishSprintStr = (expDelivery.startSprintId || expDelivery.endSprintId) && expectedSprints
+    ? calculateExpectedFinish(expStartIdx, expEndIdx, expectedSprints.min, expectedSprints.max, visibleSprintsForMetrics)
     : '—';
 
   const teamsSection = document.createElement('div');
@@ -588,7 +795,7 @@ function renderEpicDetail(epic) {
   });
   const depWrap = document.createElement('div');
   depWrap.className = 'dependency-environment-wrap';
-  depWrap.innerHTML = '<label class="dependency-label">Dependency environment</label>';
+  depWrap.innerHTML = `<label class="dependency-label ${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="dependency-environment">Dependency environment</label>`;
   depWrap.appendChild(depSelect);
   dependencyRow.appendChild(depWrap);
 
@@ -617,26 +824,14 @@ function renderEpicDetail(epic) {
   });
   wirePillsScrollArrows(teamsSection.querySelector('.selection-pills-strip'));
 
-  const inYearEbitda = norm.inYearEbitda ?? { min: 0, max: 0 };
   const valueDelivery = norm.valueDeliveryDate ?? { startSprintId: null, endSprintId: null };
-
-  const currentYear = new Date().getFullYear();
-  const valueDeliveryOverlapsCurrentYear = (() => {
-    const sid = valueDelivery.startSprintId ?? valueDelivery.endSprintId;
-    if (!sid) return false;
-    const startS = getSprintById(valueDelivery.startSprintId ?? sid);
-    const endS = getSprintById(valueDelivery.endSprintId ?? sid);
-    if (!startS || !endS) return false;
-    const startYear = new Date(startS.start).getFullYear();
-    const endYear = new Date(endS.end).getFullYear();
-    return currentYear >= startYear && currentYear <= endYear;
-  })();
-  const value2026TotalMin = ebitdaSliderToDollars(inYearEbitda.min);
-  const value2026TotalMax = ebitdaSliderToDollars(inYearEbitda.max);
-  const value2026TotalStr = valueDeliveryOverlapsCurrentYear
-    ? (value2026TotalMin === value2026TotalMax
-      ? formatCurrency(value2026TotalMin)
-      : `${formatCurrency(value2026TotalMin)}–${formatCurrency(value2026TotalMax)}`)
+  
+  // Calculate 2026 Total using Expected Delivery range overlap with remainder of 2026 × Cost of Delay
+  const value2026Total = calculate2026Total(expDelivery, expectedSprints, annEbitda);
+  const value2026TotalStr = value2026Total
+    ? (value2026Total.min === value2026Total.max
+      ? formatCurrency(value2026Total.min)
+      : `${formatCurrency(value2026Total.min)}–${formatCurrency(value2026Total.max)}`)
     : '—';
 
   const epicMetrics = viewEpic.metrics ?? [];
@@ -644,7 +839,7 @@ function renderEpicDetail(epic) {
   valueFinancialsSection.className = 'epic-section epic-value-financials';
   valueFinancialsSection.innerHTML = '<h3 class="epic-section-title">Value & Financials</h3>';
   valueFinancialsSection.appendChild(
-    renderEbitdaBoxes(realEpic.id, annEbitda, inYearEbitda, setAnnualizedEbitdaRange, setInYearEbitdaRange, () =>
+    renderEbitdaBoxes(realEpic.id, annEbitda, setAnnualizedEbitdaRange, () =>
       renderEpicDetail(getEpicById(realEpic.id))
     , isSnapshotView, confidenceMode === 'high')
   );
@@ -776,17 +971,27 @@ function renderEpicDetail(epic) {
             </div>
           </div>
           <div class="epic-detail-header-metrics">
-            <div class="epic-detail-header-value">
-              <div class="cost-summary-item"><strong>Cost of Delay:</strong> ${escapeHtml(costOfDelayStr)}</div>
-              <div class="cost-summary-item"><strong>${currentYear} Total:</strong> ${escapeHtml(value2026TotalStr)}</div>
+            <div class="epic-detail-header-section epic-detail-header-value">
+              <h3 class="metrics-section-title">Value</h3>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="annualized-ebitda">Annualized EBITDA:</strong> ${escapeHtml(annEbitdaStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-of-delay">Cost of Delay:</strong> ${escapeHtml(costOfDelayStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="2026-ebitda-total">${currentYear} EBITDA Total:</strong> ${escapeHtml(value2026TotalStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cd3-range">CD3 Range:</strong> ${escapeHtml(cd3RangeStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cd3-midpoint">CD3 Midpoint:</strong> ${escapeHtml(cd3MidpointStr)}</div>
             </div>
-            <div class="epic-detail-header-cost">
-              <div class="cost-summary-item"><strong>Cost Per Resource Per Sprint:</strong> ${escapeHtml(costPerResourceStr)}</div>
-              <div class="cost-summary-item"><strong>Cost Per Sprint:</strong> ${escapeHtml(costStr)}</div>
-              <div class="cost-summary-item"><strong>Total Sprints:</strong> ${escapeHtml(totalSprintStr)}</div>
-              <div class="cost-summary-item cost-summary-item-full"><strong>Expected Start:</strong> <span class="cost-summary-value">${escapeHtml(expectedStartSprintStr)}</span></div>
-              <div class="cost-summary-item"><strong>Delivery:</strong> ${escapeHtml(deliveryStr)}</div>
-              <div class="cost-summary-item"><strong>Total Cost:</strong> ${escapeHtml(totalCostStr)}</div>
+            <div class="epic-detail-header-section epic-detail-header-cost">
+              <h3 class="metrics-section-title">Cost</h3>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-per-resource-per-sprint">Cost Per Resource Per Sprint:</strong> ${escapeHtml(costPerResourceStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-per-sprint">Cost Per Sprint:</strong> ${escapeHtml(costStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-cost">Total Cost:</strong> ${escapeHtml(totalCostStr)}</div>
+            </div>
+            <div class="epic-detail-header-section epic-detail-header-delivery">
+              <h3 class="metrics-section-title">Delivery</h3>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="teams-resources">Teams / Resources:</strong> ${escapeHtml(teamsResourcesStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-sprints">Total Sprints:</strong> ${escapeHtml(totalSprintStr)}</div>
+              <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-start">Expected Start:</strong> <span class="cost-summary-value">${escapeHtml(expectedStartSprintStr)}</span></div>
+              <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-finish">Expected Finish:</strong> <span class="cost-summary-value">${escapeHtml(expectedFinishSprintStr)}</span></div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="delivery">Delivery:</strong> ${escapeHtml(deliveryStr)}</div>
             </div>
           </div>
         </div>
@@ -797,6 +1002,7 @@ function renderEpicDetail(epic) {
           <button type="button" class="confidence-mode-btn ${confidenceMode === 'ranges' ? 'active' : ''}" data-mode="ranges">Confidence Ranges</button>
           <button type="button" class="confidence-mode-btn ${confidenceMode === 'high' ? 'active' : ''}" data-mode="high">High Confidence</button>
         </div>
+        <button type="button" class="confidence-mode-btn ${metricsExplanationEnabled ? 'active' : ''}" id="btnMetricsExplanation">Metrics Explanation</button>
         <span class="mode-indicator ${isSnapshotView ? 'mode-viewing' : 'mode-editing'}">${isSnapshotView ? 'Viewing' : 'Editing'}</span>
         <button type="button" class="btn-snapshot" id="btnSnapshot">Snapshot ⌘S</button>
         <select class="snapshot-select" id="snapshotSelect">
@@ -810,6 +1016,11 @@ function renderEpicDetail(epic) {
       `;
       detailControlBarEl.querySelectorAll('.confidence-mode-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
+          if (btn.id === 'btnMetricsExplanation') {
+            metricsExplanationEnabled = !metricsExplanationEnabled;
+            renderEpicDetail(getEpicById(realEpic.id));
+            return;
+          }
           const mode = btn.dataset.mode;
           if (mode !== 'ranges' && mode !== 'high') return;
           confidenceMode = mode;
@@ -864,6 +1075,16 @@ function renderEpicDetail(epic) {
   epicDetailEl.appendChild(valueFinancialsSection);
   epicDetailEl.appendChild(timelineSection);
   epicDetailEl.appendChild(teamsSection);
+  
+  // Attach click handlers for metric definitions (after all sections are appended, only if enabled)
+  if (metricsExplanationEnabled) {
+    epicDetailEl.querySelectorAll('.metric-clickable').forEach(el => {
+      el.addEventListener('click', () => {
+        const metricId = el.dataset.metricId;
+        openMetricDefinitionModal(metricId);
+      });
+    });
+  }
 }
 
 function showListView() {
@@ -1024,6 +1245,20 @@ function formatRange(minVal, maxVal, formatter) {
   return `${formatter(minVal)} – ${formatter(maxVal)}`;
 }
 
+function formatMultiple(min, max) {
+  if (min == null || max == null) return '—';
+  if (min === max) return `${min.toFixed(1)}x`;
+  return `${min.toFixed(1)}–${max.toFixed(1)}x`;
+}
+
+function calculateExpectedFinish(expStartIdx, expEndIdx, deliveryMin, deliveryMax, sprints) {
+  if (expStartIdx == null || expEndIdx == null || !deliveryMin || !deliveryMax) return '—';
+  const maxIdx = sprints.length - 1;
+  const minFinishIdx = Math.min(expStartIdx + deliveryMin, maxIdx);
+  const maxFinishIdx = Math.min(expEndIdx + deliveryMax, maxIdx);
+  return formatSprintRangeFromList(minFinishIdx, maxFinishIdx, sprints);
+}
+
 function formatCurrency(value) {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
@@ -1044,163 +1279,58 @@ const EBITDA_PILLS = [
   { label: 'Game Changer', minDollars: 1500000, maxDollars: 5000000, widthPct: 25 },
 ];
 
-const INYEAR_PILLS = [
-  { label: 'High %', type: 'high', widthPct: 33 },
-  { label: 'Mixed', type: 'mixed', widthPct: 33 },
-  { label: 'Mostly Next Year', type: 'mostly', widthPct: 34 },
-];
 
-function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, onCommit, readOnly = false, isHighConfidence = false) {
+function renderEbitdaBoxes(epicId, annEbitda, setAnn, onCommit, readOnly = false, isHighConfidence = false) {
   let annMin = Math.max(0, Math.min(EBITDA_MAX, annEbitda?.min ?? 0));
   let annMax = Math.max(annMin, Math.min(EBITDA_MAX, annEbitda?.max ?? 0));
-  let inYearMin = Math.max(0, Math.min(EBITDA_MAX, inYearEbitda?.min ?? 0));
-  let inYearMax = Math.max(inYearMin, Math.min(EBITDA_MAX, inYearEbitda?.max ?? 0));
   if (isHighConfidence) {
     annMax = annMin;
-    inYearMax = Math.min(inYearMin, annMin);
-    inYearMin = inYearMax;
   }
 
   const annVal = isHighConfidence
     ? Math.max(0, Math.min(EBITDA_MAX, getDisplayValueForAnnualizedEbitda(annEbitda)))
     : annMin;
-  const inYearVal = isHighConfidence
-    ? Math.max(0, Math.min(EBITDA_MAX, getDisplayValueForInYearEbitda(inYearEbitda, annEbitda)))
-    : inYearMin;
   const EBITDA_PILL_VALUES = { Average: 2, Overperform: 10, 'Game Changer': 32 };
 
   const container = document.createElement('div');
   container.className = 'ebitda-boxes';
   const disabledAttr = readOnly ? ' disabled' : '';
 
-  if (isHighConfidence) {
-    container.innerHTML = `
+  container.innerHTML = `
       <div class="ebitda-box">
         <div class="ebitda-box-header">
-          <div class="ebitda-box-label">Annualized EBITDA</div>
-          <div class="ebitda-box-fields">
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Value</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="value">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annVal)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="down"${disabledAttr}>▼</button></div></label>
-          </div>
-        </div>
-        <div class="ebitda-ann-pills">
-          ${EBITDA_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-value="${EBITDA_PILL_VALUES[p.label] ?? 0}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
-        </div>
-      </div>
-      <div class="ebitda-box">
-        <div class="ebitda-box-header">
-          <div class="ebitda-box-label">In Year EBITDA</div>
-          <div class="ebitda-box-fields">
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Value</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="value">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearVal)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="value" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="value" data-dir="down"${disabledAttr}>▼</button></div></label>
-          </div>
-        </div>
-        <div class="ebitda-inyear-pills">
-          ${INYEAR_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-inyear" data-pill="${escapeHtml(p.type)}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
+          <div class="ebitda-box-label ${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="annualized-ebitda">Annualized EBITDA</div>
+        <div class="ebitda-box-fields">
+          ${isHighConfidence
+            ? `<label class="ebitda-box-field"><span class="ebitda-field-label">Value</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="value">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annVal)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="value" data-dir="down"${disabledAttr}>▼</button></div></label>`
+            : `<label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
+               <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>`}
         </div>
       </div>
-    `;
-  } else {
-    container.innerHTML = `
-      <div class="ebitda-box">
-        <div class="ebitda-box-header">
-          <div class="ebitda-box-label">Annualized EBITDA</div>
-          <div class="ebitda-box-fields">
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="ann" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(annMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="ann" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
-          </div>
-        </div>
-        <div class="ebitda-ann-pills">
-          ${EBITDA_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-min="${p.minDollars}" data-max="${p.maxDollars}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
-        </div>
+      <div class="ebitda-ann-pills">
+        ${EBITDA_PILLS.map((p) => isHighConfidence
+          ? `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-value="${EBITDA_PILL_VALUES[p.label] ?? 0}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`
+          : `<button type="button" class="ebitda-pill ebitda-pill-${p.widthPct}" data-min="${p.minDollars}" data-max="${p.maxDollars}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
       </div>
-      <div class="ebitda-box">
-        <div class="ebitda-box-header">
-          <div class="ebitda-box-label">In Year EBITDA</div>
-          <div class="ebitda-box-fields">
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Min</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="min">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMin)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="min" data-dir="down"${disabledAttr}>▼</button></div></label>
-            <label class="ebitda-box-field"><span class="ebitda-field-label">Max</span><span class="ebitda-field-value ebitda-field-value-large" data-box="inyear" data-edge="max">${escapeHtml(formatCurrency(ebitdaSliderToDollars(inYearMax)))}</span><div class="ebitda-field-arrows"><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="up"${disabledAttr}>▲</button><button type="button" class="ebitda-arrow" data-box="inyear" data-edge="max" data-dir="down"${disabledAttr}>▼</button></div></label>
-          </div>
-        </div>
-        <div class="ebitda-inyear-pills">
-          ${INYEAR_PILLS.map((p) => `<button type="button" class="ebitda-pill ebitda-pill-inyear" data-pill="${escapeHtml(p.type)}" ${readOnly ? 'disabled' : ''}>${escapeHtml(p.label)}</button>`).join('')}
-        </div>
-      </div>
-    `;
-  }
+    </div>
+  `;
 
   function update(box, edge, val) {
     const valEl = container.querySelector(`.ebitda-field-value[data-box="${box}"][data-edge="${edge}"]`);
     if (valEl) valEl.textContent = formatCurrency(ebitdaSliderToDollars(val));
   }
 
-  function flashAnnualizedLimitAfterCommit(edge) {
-    requestAnimationFrame(() => {
-      const valEl = document.querySelector(`.ebitda-field-value[data-box="ann"][data-edge="${edge}"]`);
-      if (!valEl) return;
-      valEl.classList.remove('ebitda-limit-flash');
-      void valEl.offsetHeight;
-      valEl.classList.add('ebitda-limit-flash');
-      setTimeout(() => valEl.classList.remove('ebitda-limit-flash'), 500);
-    });
-  }
 
-  if (isHighConfidence) {
-    container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        if (readOnly) return;
+  container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
+    pill.addEventListener('click', () => {
+      if (readOnly) return;
+      if (isHighConfidence) {
         const v = Number(pill.dataset.value ?? 0);
         annMin = Math.max(0, Math.min(EBITDA_MAX, v));
         annMax = annMin;
         setAnn(epicId, annMin, annMax);
         update('ann', 'value', annMin);
-        onCommit();
-      });
-    });
-    container.querySelectorAll('.ebitda-inyear-pills .ebitda-pill').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        if (readOnly) return;
-        let v;
-        switch (pill.dataset.pill) {
-          case 'high': v = Math.round(annMin * 0.8); break;
-          case 'mixed': v = Math.round(annMin * 0.5); break;
-          case 'mostly': v = Math.round(annMin * 0.2); break;
-          default: return;
-        }
-        v = Math.max(0, Math.min(annMin, v));
-        inYearMin = v;
-        inYearMax = v;
-        setInYear(epicId, v, v);
-        update('inyear', 'value', v);
-        onCommit();
-      });
-    });
-    container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (readOnly) return;
-        const box = btn.dataset.box;
-        const dir = btn.dataset.dir;
-        const delta = dir === 'up' ? 1 : -1;
-        if (box === 'ann') {
-          annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
-          annMax = annMin;
-          setAnn(epicId, annMin, annMax);
-          update('ann', 'value', annMin);
-        } else {
-          const requested = inYearMin + delta;
-          inYearMin = Math.max(0, Math.min(annMin, requested));
-          inYearMax = inYearMin;
-          const hitLimit = delta > 0 && requested > annMin;
-          setInYear(epicId, inYearMin, inYearMax);
-          update('inyear', 'value', inYearMin);
-          onCommit();
-          if (hitLimit) flashAnnualizedLimitAfterCommit('value');
-        }
-        if (box === 'ann') onCommit();
-      });
-    });
-  } else {
-    container.querySelectorAll('.ebitda-ann-pills .ebitda-pill').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        if (readOnly) return;
+      } else {
         const minSlider = ebitdaDollarsToSlider(Number(pill.dataset.min));
         const maxSlider = ebitdaDollarsToSlider(Number(pill.dataset.max));
         annMin = minSlider;
@@ -1208,73 +1338,36 @@ function renderEbitdaBoxes(epicId, annEbitda, inYearEbitda, setAnn, setInYear, o
         setAnn(epicId, annMin, annMax);
         update('ann', 'min', annMin);
         update('ann', 'max', annMax);
-        onCommit();
-      });
+      }
+      onCommit();
     });
-    container.querySelectorAll('.ebitda-inyear-pills .ebitda-pill').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        if (readOnly) return;
-        let newInYearMin, newInYearMax;
-        switch (pill.dataset.pill) {
-          case 'high': newInYearMin = Math.round(annMin * 0.8); newInYearMax = annMax; break;
-          case 'mixed': newInYearMin = Math.round(annMax * 0.4); newInYearMax = Math.round(annMax * 0.6); break;
-          case 'mostly': newInYearMin = Math.round(annMax * 0.1); newInYearMax = Math.round(annMax * 0.3); break;
-          default: return;
-        }
-        newInYearMin = Math.max(0, Math.min(EBITDA_MAX, newInYearMin));
-        newInYearMax = Math.max(newInYearMin, Math.min(annMax, newInYearMax));
-        inYearMin = newInYearMin;
-        inYearMax = newInYearMax;
-        setInYear(epicId, inYearMin, inYearMax);
-        update('inyear', 'min', inYearMin);
-        update('inyear', 'max', inYearMax);
-        onCommit();
-      });
-    });
-    container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (readOnly) return;
-        const box = btn.dataset.box;
-        const edge = btn.dataset.edge;
-        const dir = btn.dataset.dir;
-        const delta = dir === 'up' ? 1 : -1;
-        if (box === 'ann') {
-          if (edge === 'min') {
-            annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
-            if (annMin > annMax) annMax = annMin;
-          } else {
-            annMax = Math.max(0, Math.min(EBITDA_MAX, annMax + delta));
-            if (annMax < annMin) annMin = annMax;
-          }
-          setAnn(epicId, annMin, annMax);
+  });
+  container.querySelectorAll('.ebitda-arrow').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (readOnly) return;
+      const edge = btn.dataset.edge;
+      const dir = btn.dataset.dir;
+      const delta = dir === 'up' ? 1 : -1;
+      if (isHighConfidence) {
+        annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
+        annMax = annMin;
+        setAnn(epicId, annMin, annMax);
+        update('ann', 'value', annMin);
+      } else {
+        if (edge === 'min') {
+          annMin = Math.max(0, Math.min(EBITDA_MAX, annMin + delta));
+          if (annMin > annMax) annMax = annMin;
         } else {
-          if (edge === 'min') {
-            inYearMin = Math.max(0, Math.min(EBITDA_MAX, inYearMin + delta));
-            if (inYearMin > inYearMax) inYearMax = inYearMin;
-          } else {
-            inYearMax = Math.max(0, Math.min(EBITDA_MAX, inYearMax + delta));
-            if (inYearMax < inYearMin) inYearMin = inYearMax;
-          }
-          const hitLimit = delta > 0 && (inYearMin > annMax || inYearMax > annMax);
-          if (hitLimit) {
-            inYearMin = Math.min(inYearMin, annMax);
-            inYearMax = Math.min(inYearMax, annMax);
-            if (inYearMin > inYearMax) inYearMax = inYearMin;
-          }
-          setInYear(epicId, inYearMin, inYearMax);
-          update('inyear', 'min', inYearMin);
-          update('inyear', 'max', inYearMax);
-          onCommit();
-          if (hitLimit) flashAnnualizedLimitAfterCommit('max');
+          annMax = Math.max(0, Math.min(EBITDA_MAX, annMax + delta));
+          if (annMax < annMin) annMin = annMax;
         }
-        if (box === 'ann') {
-          update('ann', 'min', annMin);
-          update('ann', 'max', annMax);
-          onCommit();
-        }
-      });
+        setAnn(epicId, annMin, annMax);
+        update('ann', 'min', annMin);
+        update('ann', 'max', annMax);
+      }
+      onCommit();
     });
-  }
+  });
 
   return container;
 }
@@ -1349,6 +1442,79 @@ function sprintIdToIndex(id) {
   return idx >= 0 ? idx : 0;
 }
 
+/**
+ * Calculate 2026 Total based on Expected Delivery range overlap with remainder of 2026,
+ * multiplied by Cost of Delay range.
+ * 
+ * Expected Delivery range spans from Expected Start min to Expected Start max + Delivery max.
+ * We count sprints in this range that fall within remainder of 2026 (from today to end of 2026).
+ * 
+ * Min scenario: Expected Start min + Delivery min (earliest finish)
+ * Max scenario: Expected Start max + Delivery max (latest finish)
+ * 
+ * 2026 Total min = (sprints in min scenario overlapping 2026) × Cost of Delay min
+ * 2026 Total max = (sprints in max scenario overlapping 2026) × Cost of Delay max
+ */
+function calculate2026Total(expDelivery, expectedSprints, annEbitda) {
+  if (!expDelivery.startSprintId || !expectedSprints) return null;
+  
+  const currentYear = new Date().getFullYear();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
+  
+  // Get Expected Start indices
+  const sprints = getSprints();
+  const expStartIdx = sprintIdToIndex(expDelivery.startSprintId);
+  const expEndIdx = sprintIdToIndex(expDelivery.endSprintId ?? expDelivery.startSprintId);
+  
+  // Min scenario: Expected Start min + Delivery min (earliest finish)
+  const minEndIdx = Math.min(expStartIdx + expectedSprints.min, sprints.length - 1);
+  
+  // Max scenario: Expected Start max + Delivery max (latest finish)
+  const maxEndIdx = Math.min(expEndIdx + expectedSprints.max, sprints.length - 1);
+  
+  // Count sprints in each scenario that overlap with remainder of 2026
+  let overlapMinSprints = 0;
+  let overlapMaxSprints = 0;
+  
+  // Count sprints in min scenario [Expected Start min, Expected Start min + Delivery min] that overlap remainder of 2026
+  for (let i = expStartIdx; i <= minEndIdx && i < sprints.length; i++) {
+    const sprint = sprints[i];
+    if (!sprint) continue;
+    const sprintStart = new Date(sprint.start);
+    const sprintEnd = new Date(sprint.end);
+    // Sprint overlaps with remainder of 2026 if it intersects with [today, yearEnd]
+    if (sprintStart <= yearEnd && sprintEnd >= today) {
+      overlapMinSprints++;
+    }
+  }
+  
+  // Count sprints in max scenario [Expected Start max, Expected Start max + Delivery max] that overlap remainder of 2026
+  for (let i = expEndIdx; i <= maxEndIdx && i < sprints.length; i++) {
+    const sprint = sprints[i];
+    if (!sprint) continue;
+    const sprintStart = new Date(sprint.start);
+    const sprintEnd = new Date(sprint.end);
+    // Sprint overlaps with remainder of 2026 if it intersects with [today, yearEnd]
+    if (sprintStart <= yearEnd && sprintEnd >= today) {
+      overlapMaxSprints++;
+    }
+  }
+  
+  if (overlapMinSprints === 0 && overlapMaxSprints === 0) return null;
+  
+  // Cost of Delay range
+  const costOfDelayMin = ebitdaSliderToDollars(annEbitda.min) / SPRINTS_PER_YEAR;
+  const costOfDelayMax = ebitdaSliderToDollars(annEbitda.max) / SPRINTS_PER_YEAR;
+  
+  // 2026 Total = overlap sprints × Cost of Delay
+  const totalMin = overlapMinSprints * costOfDelayMin;
+  const totalMax = overlapMaxSprints * costOfDelayMax;
+  
+  return { min: totalMin, max: totalMax };
+}
+
 function sprintIdToIndexInList(id, sprints) {
   if (!id || !sprints.length) return 0;
   const idx = sprints.findIndex((s) => s.id === id);
@@ -1409,7 +1575,7 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
   xAxisHighlightValue.className = 'timeline-x-axis-highlight timeline-x-axis-highlight-value';
   xAxisHighlightValue.style.cssText = 'left: 0%; width: 0%; opacity: 0;';
 
-  function buildSliderRow(label, startSprintId, endSprintId, setter, highlightEl, rowOnCommit = null) {
+  function buildSliderRow(label, startSprintId, endSprintId, setter, highlightEl, rowOnCommit = null, metricId = null) {
     const commitFn = rowOnCommit ?? onCommit;
     let startIdx = sprintIdToIndexInList(startSprintId, sprints);
     let endIdx = sprintIdToIndexInList(endSprintId, sprints);
@@ -1424,11 +1590,13 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
 
     const disabledAttr = readOnly ? ' disabled' : '';
     const rowLabel = isHighConfidence ? label.replace(' (Min,Max)', '') : label;
+    const labelClass = (metricId && metricsExplanationEnabled) ? `timeline-row-label metric-clickable` : 'timeline-row-label';
+    const labelAttr = metricId ? ` data-metric-id="${escapeHtml(metricId)}"` : '';
     const row = document.createElement('div');
     row.className = 'timeline-row';
     if (isHighConfidence) {
       row.innerHTML = `
-        <div class="timeline-row-label">${escapeHtml(rowLabel)}</div>
+        <div class="${labelClass}"${labelAttr}>${escapeHtml(rowLabel)}</div>
         <div class="timeline-row-track">
           <div class="dual-range-wrap sprint-dual-range sprint-single-range" style="--range-min: ${pct(startIdx)}%; --range-max: ${pct(startIdx)}%;">
             <input type="range" class="slider range-single" min="0" max="${maxIdx}" step="1" value="${startIdx}"${disabledAttr} />
@@ -1438,7 +1606,7 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
       `;
     } else {
       row.innerHTML = `
-        <div class="timeline-row-label">${escapeHtml(rowLabel)}</div>
+        <div class="${labelClass}"${labelAttr}>${escapeHtml(rowLabel)}</div>
         <div class="timeline-row-track">
           <div class="dual-range-wrap sprint-dual-range" style="--range-min: ${pct(startIdx)}%; --range-max: ${pct(endIdx)}%;">
             <input type="range" class="slider range-min" min="0" max="${maxIdx}" step="1" value="${startIdx}"${disabledAttr} />
@@ -1571,8 +1739,8 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
   rowsEl.className = 'timeline-rows';
 
   const expDeliveryOnCommit = onCommitExpDelivery ?? onCommit;
-  rowsEl.appendChild(buildSliderRow('Expected Delivery Start (Min,Max)', expDelivery.startSprintId, expDelivery.endSprintId, setExpDelivery, xAxisHighlightExp, expDeliveryOnCommit));
-  rowsEl.appendChild(buildSliderRow('Value Delivery Start (Min,Max)', valueDelivery.startSprintId, valueDelivery.endSprintId, setValueDelivery, xAxisHighlightValue));
+  rowsEl.appendChild(buildSliderRow('Expected Delivery Start (Min,Max)', expDelivery.startSprintId, expDelivery.endSprintId, setExpDelivery, xAxisHighlightExp, expDeliveryOnCommit, 'expected-delivery-start'));
+  rowsEl.appendChild(buildSliderRow('Value Delivery Start (Min,Max)', valueDelivery.startSprintId, valueDelivery.endSprintId, setValueDelivery, xAxisHighlightValue, null, 'value-delivery-start'));
 
   const MIN_SECTION_WIDTH_PCT = 8;
   const sectionWidthPct = (startIdx, endIdx) => {
@@ -1601,7 +1769,7 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
   const projectRow = document.createElement('div');
   projectRow.className = 'timeline-row';
   projectRow.innerHTML = `
-    <div class="timeline-row-label">Project Timeline</div>
+    <div class="timeline-row-label ${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="project-timeline">Project Timeline</div>
     <div class="timeline-row-track">
       ${shadeHtml}
     </div>
@@ -1648,6 +1816,16 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
 
   container.appendChild(rowsEl);
   container.appendChild(xAxisRow);
+
+  // Attach click handlers for metric definitions in timeline (only if enabled)
+  if (metricsExplanationEnabled) {
+    container.querySelectorAll('.metric-clickable').forEach(el => {
+      el.addEventListener('click', () => {
+        const metricId = el.dataset.metricId;
+        openMetricDefinitionModal(metricId);
+      });
+    });
+  }
 
   return container;
 }

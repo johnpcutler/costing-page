@@ -271,9 +271,7 @@ body {
 
 /* EBITDA: side-by-side boxes with min/max */
 .ebitda-boxes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  display: block;
   margin-bottom: 1rem;
 }
 
@@ -880,13 +878,12 @@ body {
 
 .epic-detail-header-metrics {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto auto auto;
   gap: 1.25rem;
   min-width: 0;
 }
 
-.epic-detail-header-value,
-.epic-detail-header-cost {
+.epic-detail-header-section {
   min-width: 0;
   padding: 1rem 1.25rem;
   background: var(--surface-hover);
@@ -902,12 +899,27 @@ body {
   border-left: 3px solid var(--border);
 }
 
-@media (max-width: 900px) {
-  .epic-detail-header {
+.epic-detail-header-delivery {
+  border-left: 3px solid var(--border);
+}
+
+.metrics-section-title {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 1200px) {
+  .epic-detail-header-metrics {
     grid-template-columns: 1fr;
   }
+}
 
-  .epic-detail-header-metrics {
+@media (max-width: 900px) {
+  .epic-detail-header {
     grid-template-columns: 1fr;
   }
 }
@@ -935,6 +947,18 @@ body {
   display: block;
   margin-top: 0.15rem;
   word-break: break-word;
+}
+
+.metric-clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.metric-clickable:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
 }
 
 .metrics-snapshot-row {
@@ -1730,6 +1754,51 @@ body {
 .snapshot-notes-hint {
   margin: 0;
   font-size: 0.75rem;
+}
+
+/* Metric definition modal */
+.modal-metric-definition {
+  min-width: 400px;
+  max-width: 600px;
+}
+
+.metric-definition-section {
+  margin-bottom: 1.5rem;
+}
+
+.metric-definition-section:last-child {
+  margin-bottom: 0;
+}
+
+.metric-definition-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metric-definition-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.metric-definition-calculation {
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
   color: var(--text-muted);
 }
 

@@ -9,7 +9,7 @@ This guide explains how to use the app from the browser: what you see, how to mo
 You use this app to shape **program epics**: initiatives that involve one or more teams, have an expected cost and timeline, and an expected value (EBITDA). For each epic you can:
 
 - Add teams and set how much of each team is involved and for how long
-- Set expected value (annualized and in the current year) and see cost of delay
+- Set expected value (annualized) and see cost of delay
 - Set when work is expected to start and when value will be delivered
 - Attach outcome metrics and notes, and save snapshots to compare versions
 
@@ -46,7 +46,7 @@ When you open an epic, you see:
 2. **Epic title and meta**: Name, ID, Status
 3. **Initiative Objective**: Short description of the initiative (editable)
 4. **Summary metrics**: Cost of Delay, current-year total value, cost per resource/sprint, cost per sprint, total sprints, expected start, delivery length, total cost
-5. **Value & Financials**: Annualized EBITDA, In Year EBITDA, and Metrics to move
+5. **Value & Financials**: Annualized EBITDA and Metrics to move
 6. **Timeline**: Expected Delivery Start, Value Delivery Start, and Project Timeline
 7. **Teams**: Dependency environment, team cards with involvement and extent, notes, and to-dos
 
@@ -108,7 +108,7 @@ These are computed from your inputs; you don’t edit them here.
 - Expected **12‑month** value (run rate) of the initiative.
 - **Confidence Ranges**: You set **Min** and **Max** (arrows or pills: Average / Overperform / Game Changer). Values are in dollars; the app converts to an internal scale ($0–$10M).
 - **High Confidence**: Single **Value** and the same pills to set a point estimate.
-- This drives **Cost of Delay** and caps **In Year EBITDA** (see below).
+- This drives **Cost of Delay** and the **2026 Total** calculation.
 
 **In Year EBITDA**
 
