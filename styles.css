@@ -872,6 +872,13 @@ body {
 }
 
 .epic-detail-header-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.epic-detail-header-left {
   min-width: 0;
 }
 
@@ -934,7 +941,7 @@ body {
 }
 
 @media (max-width: 900px) {
-  .epic-detail-header {
+  .epic-detail-header-top {
     grid-template-columns: 1fr;
   }
 }

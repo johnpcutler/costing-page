@@ -75,7 +75,9 @@ export function getEpicById(id) {
     if (epic.dependencyEnvironment == null) epic.dependencyEnvironment = 0;
     if (epic.inYearEbitdaSet == null) epic.inYearEbitdaSet = false;
     if (epic.valueDeliveryLinked == null) epic.valueDeliveryLinked = true;
-    if (epic.initiativeObjective == null) epic.initiativeObjective = '';
+    if (epic.initiativeObjective == null || epic.initiativeObjective === '') {
+      epic.initiativeObjective = 'Improve end-to-end supply chain performance by reducing variability, cost, and lead time while increasing service reliability and decision confidence. This initiative aims to optimize planning, sourcing, production, and distribution flows so that inventory is better aligned to demand, capital is deployed more efficiently, and teams can respond faster to disruptions without sacrificing customer outcomes.';
+    }
     if (!Array.isArray(epic.snapshots)) epic.snapshots = [];
     if (!Array.isArray(epic.metrics)) epic.metrics = [];
     for (const a of epic.teamAssignments ?? []) {
@@ -114,7 +116,7 @@ export function addEpic(name, status = 'High Level Shaping') {
     dependencyEnvironment: 0,
     inYearEbitdaSet: false,
     valueDeliveryLinked: true,
-    initiativeObjective: '',
+    initiativeObjective: 'Improve end-to-end supply chain performance by reducing variability, cost, and lead time while increasing service reliability and decision confidence. This initiative aims to optimize planning, sourcing, production, and distribution flows so that inventory is better aligned to demand, capital is deployed more efficiently, and teams can respond faster to disruptions without sacrificing customer outcomes.',
     snapshots: [],
     metrics: [],
   };

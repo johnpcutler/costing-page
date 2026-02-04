@@ -45,7 +45,7 @@ When you open an epic, you see:
 1. **Header**: **← Back** (returns to the list), then a control bar
 2. **Epic title and meta**: Name, ID, Status
 3. **Initiative Objective**: Short description of the initiative (editable)
-4. **Summary metrics**: Cost of Delay, current-year total value, cost per resource/sprint, cost per sprint, total sprints, expected start, delivery length, total cost
+4. **Summary metrics**: Cost of Delay, current-year total value, cost per resource/sprint, cost per sprint, total resource sprints, expected start, delivery length, total cost
 5. **Value & Financials**: Annualized EBITDA and Metrics to move
 6. **Timeline**: Expected Delivery Start, Value Delivery Start, and Project Timeline
 7. **Teams**: Dependency environment, team cards with involvement and extent, notes, and to-dos
@@ -94,7 +94,7 @@ These are computed from your inputs; you don’t edit them here.
 | **{Year} Total** | In-year value for the current calendar year, only when Value Delivery overlaps that year. Otherwise “—”. |
 | **Cost Per Resource Per Sprint** | Blended cost per person per sprint across the assigned teams. |
 | **Cost Per Sprint** | Total burn rate (sum of team costs at the involvement level you set). |
-| **Total Sprints** | Sum of person-sprints across teams (people × duration). |
+| **Total Resource Sprints** | Sum of person-sprints across teams (people × duration). |
 | **Expected Start** | The sprint range you set for when work starts. |
 | **Delivery** | How many sprints the work takes (based on team durations and dependency). |
 | **Total Cost** | Estimated total cost (cost per sprint × delivery, in range form). |

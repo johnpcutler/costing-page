@@ -171,10 +171,10 @@ All of these are computed from team assignments (and dependency for delivery len
 - Sum over teams: min burn = sum of (peopleMin × rate), max burn = sum of (peopleMax × rate).  
 - Display: “Cost Per Sprint”.
 
-**Total sprints (person-sprints)**  
+**Total Resource Sprints (person-sprints)**  
 - Per team: `peopleMin × extentMin` and `peopleMax × extentMax` (extent from duration conversion to sprints).  
 - Sum over teams.  
-- Display: “Total Sprints: X – Y total”.
+- Display: “Total Resource Sprints: X – Y total”.
 
 **Total cost**  
 - Per team: `people × rate × extent` (sprints).  

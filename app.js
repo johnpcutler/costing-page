@@ -81,7 +81,7 @@ const METRIC_DEFINITIONS = {
     category: 'cost'
   },
   'total-sprints': {
-    name: 'Total Sprints',
+    name: 'Total Resource Sprints',
     definition: 'Total person-sprints (people × sprints) across all teams — capacity consumed by the epic.',
     calculation: 'Per team: People × Duration (in sprints)\nTotal min = Σ (People min × Duration min)\nTotal max = Σ (People max × Duration max)\nWhere People comes from Involvement and Duration is converted to sprints',
     category: 'cost'
@@ -143,7 +143,7 @@ const METRIC_DEFINITIONS = {
   'duration': {
     name: 'Duration',
     definition: 'How long each team works on the epic, in weeks, months, quarters, years, or sprints.',
-    calculation: 'Conversion to sprints:\n  Weeks: ceil(weeks ÷ 2)\n  Months: months × 2\n  Quarters: quarters × 6\n  Years: years × 24\n  Sprints: no conversion\nResult is a min and max extent in sprints used in Total Sprints, Total Cost, and Delivery length.',
+    calculation: 'Conversion to sprints:\n  Weeks: ceil(weeks ÷ 2)\n  Months: months × 2\n  Quarters: quarters × 6\n  Years: years × 24\n  Sprints: no conversion\nResult is a min and max extent in sprints used in Total Resource Sprints, Total Cost, and Delivery length.',
     category: 'input'
   },
   'dependency-environment': {
@@ -949,13 +949,15 @@ function renderEpicDetail(epic) {
       wrap.innerHTML = `
         <div class="epic-detail-header">
           <div class="epic-detail-header-top">
-            <h2 class="epic-detail-title">${escapeHtml(viewEpic.name)}</h2>
-            <dl class="epic-detail-meta">
-              <dt>ID</dt>
-              <dd>${realEpic.id}</dd>
-              <dt>Status</dt>
-              <dd>${escapeHtml(viewEpic.status)}</dd>
-            </dl>
+            <div class="epic-detail-header-left">
+              <h2 class="epic-detail-title">${escapeHtml(viewEpic.name)}</h2>
+              <dl class="epic-detail-meta">
+                <dt>ID</dt>
+                <dd>${realEpic.id}</dd>
+                <dt>Status</dt>
+                <dd>${escapeHtml(viewEpic.status)}</dd>
+              </dl>
+            </div>
             <div class="initiative-objective">
               <div class="initiative-objective-label">
                 <span>Initiative Objective</span>
@@ -967,7 +969,7 @@ function renderEpicDetail(epic) {
                      <button type="button" class="btn-objective-cancel" id="btnObjectiveCancel">Cancel</button>
                      <button type="button" class="btn-objective-save" id="btnObjectiveSave">Save</button>
                    </div>`
-                : `<div class="initiative-objective-text ${!(viewEpic.initiativeObjective || '').trim() ? 'is-placeholder' : ''}">${escapeHtml((viewEpic.initiativeObjective || '').trim()) || 'No objective set'}</div>`}
+                : `<div class="initiative-objective-text ${!(viewEpic.initiativeObjective || '').trim() ? 'is-placeholder' : ''}">${escapeHtml((viewEpic.initiativeObjective || '').trim() || 'Improve end-to-end supply chain performance by reducing variability, cost, and lead time while increasing service reliability and decision confidence. This initiative aims to optimize planning, sourcing, production, and distribution flows so that inventory is better aligned to demand, capital is deployed more efficiently, and teams can respond faster to disruptions without sacrificing customer outcomes.')}</div>`}
             </div>
           </div>
           <div class="epic-detail-header-metrics">
@@ -989,7 +991,7 @@ function renderEpicDetail(epic) {
               <h3 class="metrics-section-title">Delivery</h3>
               <div class="cost-summary-item cost-summary-item-highlight"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="delivery">Delivery:</strong> ${escapeHtml(deliveryStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="teams-resources">Teams / Resources:</strong> ${escapeHtml(teamsResourcesStr)}</div>
-              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-sprints">Total Sprints:</strong> ${escapeHtml(totalSprintStr)}</div>
+              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-sprints">Total Resource Sprints:</strong> ${escapeHtml(totalSprintStr)}</div>
               <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-start">Expected Start:</strong> <span class="cost-summary-value">${escapeHtml(expectedStartSprintStr)}</span></div>
               <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-finish">Expected Finish:</strong> <span class="cost-summary-value">${escapeHtml(expectedFinishSprintStr)}</span></div>
             </div>
@@ -1187,7 +1189,7 @@ function computeCostPerSprint(assignments) {
   return { min: minTotal, max: maxTotal };
 }
 
-// Total Sprints (person-sprints) = Resources × Sprints per team, summed. Range from min/max people × min/max extent.
+// Total Resource Sprints (person-sprints) = Resources × Sprints per team, summed. Range from min/max people × min/max extent.
 function computeTotalSprints(assignments) {
   if (assignments.length === 0) return null;
   let minT = 0;

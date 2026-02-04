@@ -77,7 +77,7 @@ Each metric shown in the Program Epics app, with a short definition and how it i
 
 ---
 
-### Total Sprints (person-sprints)
+### Total Resource Sprints (person-sprints)
 
 **Definition:** Total **person-sprints** (people × sprints) across all teams — capacity consumed by the epic.
 
