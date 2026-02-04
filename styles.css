@@ -865,14 +865,13 @@ body {
 }
 
 .epic-detail-header {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2rem;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
   margin-bottom: 1.5rem;
 }
 
-.epic-detail-header-left {
+.epic-detail-header-top {
   min-width: 0;
 }
 
@@ -904,12 +903,28 @@ body {
 }
 
 .metrics-section-title {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 1rem 0;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.1em;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--border);
+}
+
+.cost-summary-item-highlight {
+  background: rgba(167, 139, 250, 0.15);
+  padding: 0.75rem;
+  margin: 0 -0.75rem 0.5rem -0.75rem;
+  border-radius: 6px;
+  border-left: 3px solid var(--accent);
+  font-weight: 500;
+}
+
+.cost-summary-item-highlight strong {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 @media (max-width: 1200px) {

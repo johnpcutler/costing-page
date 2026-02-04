@@ -948,7 +948,7 @@ function renderEpicDetail(epic) {
       const wrap = document.createElement('div');
       wrap.innerHTML = `
         <div class="epic-detail-header">
-          <div class="epic-detail-header-left">
+          <div class="epic-detail-header-top">
             <h2 class="epic-detail-title">${escapeHtml(viewEpic.name)}</h2>
             <dl class="epic-detail-meta">
               <dt>ID</dt>
@@ -973,7 +973,7 @@ function renderEpicDetail(epic) {
           <div class="epic-detail-header-metrics">
             <div class="epic-detail-header-section epic-detail-header-value">
               <h3 class="metrics-section-title">Value</h3>
-              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="annualized-ebitda">Annualized EBITDA:</strong> ${escapeHtml(annEbitdaStr)}</div>
+              <div class="cost-summary-item cost-summary-item-highlight"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="annualized-ebitda">Annualized EBITDA:</strong> ${escapeHtml(annEbitdaStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-of-delay">Cost of Delay:</strong> ${escapeHtml(costOfDelayStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="2026-ebitda-total">${currentYear} EBITDA Total:</strong> ${escapeHtml(value2026TotalStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cd3-range">CD3 Range:</strong> ${escapeHtml(cd3RangeStr)}</div>
@@ -981,17 +981,17 @@ function renderEpicDetail(epic) {
             </div>
             <div class="epic-detail-header-section epic-detail-header-cost">
               <h3 class="metrics-section-title">Cost</h3>
+              <div class="cost-summary-item cost-summary-item-highlight"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-cost">Total Cost:</strong> ${escapeHtml(totalCostStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-per-resource-per-sprint">Cost Per Resource Per Sprint:</strong> ${escapeHtml(costPerResourceStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="cost-per-sprint">Cost Per Sprint:</strong> ${escapeHtml(costStr)}</div>
-              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-cost">Total Cost:</strong> ${escapeHtml(totalCostStr)}</div>
             </div>
             <div class="epic-detail-header-section epic-detail-header-delivery">
               <h3 class="metrics-section-title">Delivery</h3>
+              <div class="cost-summary-item cost-summary-item-highlight"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="delivery">Delivery:</strong> ${escapeHtml(deliveryStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="teams-resources">Teams / Resources:</strong> ${escapeHtml(teamsResourcesStr)}</div>
               <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="total-sprints">Total Sprints:</strong> ${escapeHtml(totalSprintStr)}</div>
               <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-start">Expected Start:</strong> <span class="cost-summary-value">${escapeHtml(expectedStartSprintStr)}</span></div>
               <div class="cost-summary-item cost-summary-item-full"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="expected-finish">Expected Finish:</strong> <span class="cost-summary-value">${escapeHtml(expectedFinishSprintStr)}</span></div>
-              <div class="cost-summary-item"><strong class="${metricsExplanationEnabled ? 'metric-clickable' : ''}" data-metric-id="delivery">Delivery:</strong> ${escapeHtml(deliveryStr)}</div>
             </div>
           </div>
         </div>
