@@ -36,6 +36,7 @@ import {
 import { loadTeams, getTeamById, getTeams } from './teams.js';
 import { loadSprints, getSprints, getSprintById, getNextNonBlockedIndex } from './sprints.js';
 import { getDisplayValueForAnnualizedEbitda, getDisplayValueForInYearEbitda } from './confidenceMode.js';
+import { computeProjectTimelineSections } from './timelineSections.js';
 
 const epicListEl = document.getElementById('epicList');
 const btnNew = document.getElementById('btnNew');
@@ -1388,22 +1389,14 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
   const maxIdx = Math.max(0, sprints.length - 1);
   const pct = maxIdx > 0 ? (i) => (i / maxIdx) * 100 : (i) => (i === 0 ? 100 : 0);
 
-  const shadeStartIdx = (expectedSprints != null)
-    ? expDeliveryStartIdx
-    : null;
-  const shadeMinEndIdx = (expectedSprints != null)
-    ? Math.min(expDeliveryStartIdx + expectedSprints.min, sprints.length - 1)
-    : null;
-  let shadeMaxEndIdx = (expectedSprints != null)
-    ? Math.min(expDeliveryEndIdx + expectedSprints.max, sprints.length - 1)
-    : null;
-  if (shadeMinEndIdx != null && shadeMaxEndIdx != null && shadeMaxEndIdx < shadeMinEndIdx) {
-    shadeMaxEndIdx = shadeMinEndIdx;
-  }
-  if (isHighConfidence && shadeMinEndIdx != null) {
-    shadeMaxEndIdx = shadeMinEndIdx; // single point, no range band
-  }
-  const showShade = shadeStartIdx != null && shadeMaxEndIdx != null && shadeStartIdx <= shadeMaxEndIdx;
+  const sections = computeProjectTimelineSections({
+    sprintCount: sprints.length,
+    expectedStartMinIdx: expDeliveryStartIdx,
+    expectedStartMaxIdx: expDeliveryEndIdx,
+    expectedSprints,
+    isHighConfidence,
+  });
+  const showShade = !!sections;
 
   const container = document.createElement('div');
   container.className = 'timeline-unified';
@@ -1581,9 +1574,29 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
   rowsEl.appendChild(buildSliderRow('Expected Delivery Start (Min,Max)', expDelivery.startSprintId, expDelivery.endSprintId, setExpDelivery, xAxisHighlightExp, expDeliveryOnCommit));
   rowsEl.appendChild(buildSliderRow('Value Delivery Start (Min,Max)', valueDelivery.startSprintId, valueDelivery.endSprintId, setValueDelivery, xAxisHighlightValue));
 
-  const shadeHtml = showShade
-    ? `<div class="timeline-shade timeline-shade-core" style="left: ${pct(shadeStartIdx)}%; width: ${pct(shadeMinEndIdx) - pct(shadeStartIdx)}%;"></div>
-       <div class="timeline-shade timeline-shade-range" style="left: ${pct(shadeMinEndIdx)}%; width: ${pct(shadeMaxEndIdx) - pct(shadeMinEndIdx)}%;"></div>`
+  const MIN_SECTION_WIDTH_PCT = 8;
+  const sectionWidthPct = (startIdx, endIdx) => {
+    const w = Math.max(0, pct(endIdx) - pct(startIdx));
+    return w < 0.5 ? MIN_SECTION_WIDTH_PCT : w;
+  };
+  
+  // Render Segment C (back), then Segment B (middle), then Segment A (front)
+  const shadeHtml = showShade && sections
+    ? (() => {
+        const segA = sections.segmentA;
+        const segB = sections.segmentB;
+        const segC = sections.segmentC;
+        
+        const wA = sectionWidthPct(segA.startIdx, segA.endIdx);
+        const wB = sectionWidthPct(segB.startIdx, segB.endIdx);
+        const wC = sectionWidthPct(segC.startIdx, segC.endIdx);
+        
+        return `
+          <div class="timeline-shade timeline-shade-section3" style="left: ${pct(segC.startIdx)}%; width: ${wC}%;"></div>
+          <div class="timeline-shade timeline-shade-section2" style="left: ${pct(segB.startIdx)}%; width: ${wB}%;"></div>
+          <div class="timeline-shade timeline-shade-section1" style="left: ${pct(segA.startIdx)}%; width: ${wA}%;"></div>
+        `;
+      })()
     : '<span class="timeline-row-empty">Add teams to create project timeline</span>';
   const projectRow = document.createElement('div');
   projectRow.className = 'timeline-row';
@@ -1594,6 +1607,29 @@ function renderUnifiedTimeline(epicId, expDelivery, valueDelivery, expectedSprin
     </div>
   `;
   rowsEl.appendChild(projectRow);
+
+  const legendRow = document.createElement('div');
+  legendRow.className = 'timeline-row';
+  legendRow.innerHTML = `
+    <div class="timeline-row-label"></div>
+    <div class="timeline-row-track">
+      <div class="timeline-legend">
+        <div class="timeline-legend-item">
+          <span class="timeline-legend-swatch timeline-legend-swatch-section1"></span>
+          <span>Start Range</span>
+        </div>
+        <div class="timeline-legend-item">
+          <span class="timeline-legend-swatch timeline-legend-swatch-section2"></span>
+          <span>Overlap</span>
+        </div>
+        <div class="timeline-legend-item">
+          <span class="timeline-legend-swatch timeline-legend-swatch-section3"></span>
+          <span>Completion Range</span>
+        </div>
+      </div>
+    </div>
+  `;
+  rowsEl.appendChild(legendRow);
 
   const xAxisRow = document.createElement('div');
   xAxisRow.className = 'timeline-row timeline-x-axis-row';

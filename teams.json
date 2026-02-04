@@ -10,9 +10,9 @@
   {"id": "supply-chain", "name": "Supply Chain", "teamSize": 8, "totalTeamCost": 1240000},
   {"id": "logistics", "name": "Logistics", "teamSize": 7, "totalTeamCost": 1100000},
   {"id": "finance", "name": "Finance", "teamSize": 5, "totalTeamCost": 850000},
-  {"id": "hr", "name": "HR & People", "teamSize": 4, "totalTeamCost": 720000},
+  {"id": "hr", "name": "HR & People", "teamSize": 5, "totalTeamCost": 720000},
   {"id": "it", "name": "IT & Infrastructure", "teamSize": 11, "totalTeamCost": 1980000},
-  {"id": "legal", "name": "Legal & Compliance", "teamSize": 3, "totalTeamCost": 600000},
+  {"id": "legal", "name": "Legal & Compliance", "teamSize": 5, "totalTeamCost": 750000},
   {"id": "product", "name": "Product", "teamSize": 10, "totalTeamCost": 1750000},
   {"id": "design", "name": "Design", "teamSize": 6, "totalTeamCost": 920000}
 ]

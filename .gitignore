@@ -22,3 +22,9 @@ npm-debug.log*
 # Optional
 coverage/
 .nyc_output/
+
+# Python
+venv/
+pytest_cache/
+__pycache__/
+*.pyc
